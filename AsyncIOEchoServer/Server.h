@@ -70,7 +70,7 @@ struct SocketState {
 	/*
 	Returns a pointer to a free buffer. This may only be called by one thread (producer)
 	*/
-	WSABUF* getWritableBuff() {
+	WSABUF* getWritableBuff(bool setCurrentWriteBuff=true) {
 		const uint32_t nextElement = (buffWritePtr + 1) % NUMBER_OF_BUFFS; // next write element
 		// wait until the element is available (the ring buffer is not full any more)
 		while (nextElement == buffReadPtr) {
@@ -80,7 +80,9 @@ struct SocketState {
 		freeBuff->len = BUFF_LEN;
 		buffWritePtr = nextElement;
 
-		currentWriteBuff = freeBuff;
+		if (setCurrentWriteBuff){
+			currentWriteBuff = freeBuff;
+		}
 		return freeBuff;
 	}
 

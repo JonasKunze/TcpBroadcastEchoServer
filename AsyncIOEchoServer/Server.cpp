@@ -278,13 +278,16 @@ void Server::findMessages(SocketState* socketState){
 		if (availableBytes == socketState->bytesMissingForCurrentMessage) {
 			socketState->bytesMissingForCurrentMessage = 0;
 		}
+		else {
+			socketState->bytesMissingForCurrentMessage -= availableBytes;
+		}
 	}
 	else { // The current message is still not finished
 		socketState->bytesMissingForCurrentMessage -= availableBytes;
 	}
 
 	if (socketState->bytesMissingForCurrentMessage != 0) { // The last message hast not been completely transmitted
-		WSABUF* nextBuff = socketState->getWritableBuff();
+		WSABUF* nextBuff = socketState->getWritableBuff(false);
 
 		// If the buffer is in the end of the array we would send back an unfinished message! So we have to get a new buffer which will be the first in the buffer array. 
 		// This way next time we will send this buffer together with the remaining part of the unfinished message
@@ -292,11 +295,13 @@ void Server::findMessages(SocketState* socketState){
 		if (bufferWasLastOfArray){
 			// Allow to read the last buffer but make it empty
 			nextBuff->len = 0;
-			nextBuff = socketState->getWritableBuff();
+			nextBuff = socketState->getWritableBuff(false);
 		}
 
 		// Copy the beginning of the unfinished message to the next buffer but do not acknowledge the reading of this buffer yet
 		memcpy(nextBuff->buf, socketState->currentWriteBuff->buf + currentMsgPtr, availableBytes);
+		socketState->currentWriteBuff->len -= availableBytes;
+		nextBuff->len = availableBytes;
 
 		// Now we are done with the current buffer
 		if (bufferWasLastOfArray) {
