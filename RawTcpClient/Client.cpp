@@ -127,6 +127,11 @@ void Client::receiveMessages() {
 			unsigned int bytesRemaining = BUFLEN - bufferFree;
 			if (header->messageLength <= bytesRemaining) {
 				numberOfMessagesReceived++;
+
+				if (numberOfMessagesReceived % 1000 == 0) {
+					cout << "Received " << numberOfMessagesReceived << " messages" << endl;
+				}
+
 				if (verbose) {
 					string message(bufPtr + sizeof(MessageHeader), header->messageLength-sizeof(MessageHeader));
 					cout << "Received message " << header->messageNumber << " with " << header->messageLength << " B: " << message.c_str() << std::endl;
@@ -155,13 +160,17 @@ void Client::sendMessage(std::string&& msg){
 }
 
 void Client::sendMessage(const char* data, const int len) {
-	char headderBuffer[sizeof(MessageHeader)];
-	MessageHeader* header = reinterpret_cast<MessageHeader*>(headderBuffer);
+	//char headderBuffer[sizeof(MessageHeader)];
+	char* buf = new char[len + sizeof(MessageHeader)];
+	
+	MessageHeader* header = reinterpret_cast<MessageHeader*>(buf);
 	header->messageLength = len + sizeof(MessageHeader);
 	header->messageNumber = numberOfMessagesSent++;
 
-	sendData(headderBuffer, sizeof(MessageHeader));
-	sendData(data, len);
+	memcpy(buf + sizeof(MessageHeader), data, len);
+	
+	sendData(buf, header->messageLength);
+	//sendData(data, len);
 
 	// print status feedback
 	if (numberOfMessagesSent % 1000 == 0) {

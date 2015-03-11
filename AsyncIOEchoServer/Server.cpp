@@ -261,19 +261,74 @@ WSAOVERLAPPED* Server::new_overlapped() {
 	return (WSAOVERLAPPED*)calloc(1, sizeof(WSAOVERLAPPED));
 }
 
+void Server::findMessages(SocketState* socketState){
+	unsigned int currentMsgPtr = 0;
+	unsigned int availableBytes = socketState->currentWriteBuff->len;
+	
+	const bool lastBufferContainsUnfinishedMsg = socketState->bytesMissingForCurrentMessage != 0;
+
+	if (availableBytes > socketState->bytesMissingForCurrentMessage) {// the current message has been finished
+		do {
+			currentMsgPtr += socketState->bytesMissingForCurrentMessage; // get next message
+		    availableBytes -= socketState->bytesMissingForCurrentMessage;
+
+			MessageHeader* hdr = reinterpret_cast<MessageHeader*>(socketState->currentWriteBuff->buf + currentMsgPtr);
+			socketState->bytesMissingForCurrentMessage = hdr->messageLength;
+		} while (availableBytes > socketState->bytesMissingForCurrentMessage);
+		if (availableBytes == socketState->bytesMissingForCurrentMessage) {
+			socketState->bytesMissingForCurrentMessage = 0;
+		}
+	}
+	else { // The current message is still not finished
+		socketState->bytesMissingForCurrentMessage -= availableBytes;
+	}
+
+	if (socketState->bytesMissingForCurrentMessage != 0) { // The last message hast not been completely transmitted
+		WSABUF* nextBuff = socketState->getWritableBuff();
+
+		// If the buffer is in the end of the array we would send back an unfinished message! So we have to get a new buffer which will be the first in the buffer array. 
+		// This way next time we will send this buffer together with the remaining part of the unfinished message
+		bool bufferWasLastOfArray = socketState->isLastWritableBufferAtEndOfArray();
+		if (bufferWasLastOfArray){
+			// Allow to read the last buffer but make it empty
+			nextBuff->len = 0;
+			nextBuff = socketState->getWritableBuff();
+		}
+
+		// Copy the beginning of the unfinished message to the next buffer but do not acknowledge the reading of this buffer yet
+		memcpy(nextBuff->buf, socketState->currentWriteBuff->buf + currentMsgPtr, availableBytes);
+
+		// Now we are done with the current buffer
+		if (bufferWasLastOfArray) {
+			socketState->writeFinished(); // acknowledge reading of empty buffer
+		}
+	}
+
+
+	// If last buffer contained an unfinished message it is finished now -> acknowledge the usage of the last buffer
+	if (lastBufferContainsUnfinishedMsg){
+		socketState->writeFinished();
+	}
+}
+
 void Server::read_completed(BOOL resultOk, DWORD length,
 	SocketState* socketState) {
-
 	socketState->ongoingOps--;
-	memset(socketState->receiveOverlapped, 0, sizeof(WSAOVERLAPPED));
-	socketState->writeFinished();
 
 	if (resultOk){
 		if (length > 0)	{
 			//std::std::cout << "Received " << socketState->buf << std::std::endl;
 
-			// starts another write
-			socketState->currentWritBuff->len = length;
+			
+			memset(socketState->receiveOverlapped, 0, sizeof(WSAOVERLAPPED));
+			socketState->currentWriteBuff->len = length;
+
+			findMessages(socketState);
+			
+			socketState->writeFinished();
+
+
+				// carry on reading and broadcast the messages
 			start_reading(socketState);
 			startBroadcasting(socketState);
 		}
