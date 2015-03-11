@@ -86,7 +86,11 @@ void Client::receiveMessages() {
 			int len = recv(sock, bufPtr, bufferFree, 0);
 
 			if (len > 0) {
-				if (!header){
+				if (verbose) {
+					cout << "Received " << len << "B: " << bufPtr << endl;
+				}
+
+				if (!header) {
 					header = reinterpret_cast<MessageHeader*>(bufPtr);
 				}
 
@@ -188,6 +192,4 @@ void Client::sendData(const char* data, const int len) {
 		// connect to another server or reconnect
 		reconnect();
 	}
-
-
 }
