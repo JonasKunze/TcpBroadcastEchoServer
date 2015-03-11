@@ -13,7 +13,7 @@ enum Configs {
 	BUFF_LEN = 1500,
 	SERVER_ADDRESS = INADDR_LOOPBACK,
 	SERVICE_PORT = 1234,
-	NUMBER_OF_BUFFS = 100
+	NUMBER_OF_BUFFS = 1000 // this makes 1,5 MB per client
 };
 
 
@@ -28,6 +28,8 @@ struct SocketState {
 	WSAOVERLAPPED* sendOverlapped;
 	WSAOVERLAPPED* receiveOverlapped;	
 	WSABUF* currentWritBuff;
+	char* allBuffsMemory;
+	bool toBeClosed;
 
 	SocketState(){
 		socket = -1;
@@ -37,10 +39,22 @@ struct SocketState {
 		ongoingOps = 0;
 		sendOverlapped = nullptr;
 		receiveOverlapped = nullptr;
+
+		toBeClosed = false;
+
+		// Minimize fragmentation my allocating one single buffer and split it then 
+		allBuffsMemory = new char[NUMBER_OF_BUFFS*BUFF_LEN];
+
 		for (auto& buff : buffs){
 			buff.len = 0;
-			buff.buf = new char[BUFF_LEN];
+			buff.buf = allBuffsMemory;
+			allBuffsMemory += BUFF_LEN;
 		}
+		allBuffsMemory -= NUMBER_OF_BUFFS*BUFF_LEN;
+	}
+
+	~SocketState() {
+		delete[] allBuffsMemory; // delete the big memory block used by all buffers
 	}
 
 	/*
@@ -67,7 +81,6 @@ struct SocketState {
 		}
 		
 		buffWritePtr = nextElement;
-		currentWritBuff = nullptr;
 	}
 
 	/*
@@ -79,9 +92,9 @@ struct SocketState {
 			std::this_thread::sleep_for(std::chrono::microseconds(100));
 		}
 
-		unsigned int numberOfReadableElements = NUMBER_OF_BUFFS - buffReadPtr - 1; // correct if all elements right of readPtr are valid
+		unsigned int numberOfReadableElements = NUMBER_OF_BUFFS - buffReadPtr; // correct if all elements right of readPtr are valid
 		if (buffWritePtr > buffReadPtr) {//Only read the elements between write and read ptr
-			numberOfReadableElements = buffWritePtr - buffReadPtr - 1;
+			numberOfReadableElements = buffWritePtr - buffReadPtr;
 		}
 
 		startPointer = &buffs[buffReadPtr];

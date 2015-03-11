@@ -78,6 +78,7 @@ void Server::start_reading(SocketState* socketState) {
 	DWORD flags = 0;
 
 	socketState->ongoingOps++;
+
 	if (WSARecv(socketState->socket, socketState->getWritableBuff(), 1, NULL, &flags, socketState->receiveOverlapped, NULL)
 		== SOCKET_ERROR)
 	{
@@ -96,7 +97,11 @@ void Server::startBroadcasting(SocketState* socketState) {
 
 	std::unique_lock<std::mutex> lock(clientsMutex);
 	for (auto& client : clients) {
+		if (client->toBeClosed) {
+			continue;
+		}
 		client->ongoingOps++;
+
 		// Sends all buffs available to the current connected client
 		if (WSASend(client->socket, wsaBuffers, buffNum, NULL, 0, client->sendOverlapped, NULL)
 			== SOCKET_ERROR)
@@ -104,7 +109,7 @@ void Server::startBroadcasting(SocketState* socketState) {
 			int err = WSAGetLastError();
 			if (err != WSA_IO_PENDING)
 			{
-				std::cout << "Error " << err << " in WSASend" << std::endl;
+				std::cout << "Error " << err << " in WSASend " << client->socket << "\t" << client->ongoingOps << "\t" << client->toBeClosed << std::endl;
 				destroy_connection(client);
 			}
 		}
@@ -116,7 +121,6 @@ void Server::write_completed(BOOL resultOk, DWORD length,
 	SocketState* socketState)
 {
 	socketState->ongoingOps--;
-	socketState->writeFinished();
 
 	memset(socketState->sendOverlapped, 0, sizeof(WSAOVERLAPPED));
 	if (resultOk)
@@ -199,6 +203,9 @@ void Server::destroy_connection(SocketState* socketState)
 		delete socketState->receiveOverlapped;
 		delete socketState;
 	}
+	else {
+		socketState->toBeClosed = true;
+	}
 }
 
 
@@ -215,13 +222,13 @@ BOOL Server::get_completion_status(DWORD* length, SocketState** socketState,
 	if (!resultOk)
 	{
 		DWORD err = GetLastError();
-		std::cerr << "Error " << err << " getting completion port status!!!" << std::endl;
+		//std::cerr << "Error " << err << " getting completion port status!!!" << std::endl;
 		destroy_connection(*socketState);
 	}
 
 	if (!*socketState || !*ovl_res)
 	{
-		std::cout << "* don't know what to do, aborting!!!" << std::endl;
+		std::cout << "Don't know what to do, aborting!!!" << std::endl;
 		exit(1);
 	}
 
@@ -259,6 +266,7 @@ void Server::read_completed(BOOL resultOk, DWORD length,
 
 	socketState->ongoingOps--;
 	memset(socketState->receiveOverlapped, 0, sizeof(WSAOVERLAPPED));
+	socketState->writeFinished();
 
 	if (resultOk){
 		if (length > 0)	{
@@ -278,7 +286,7 @@ void Server::read_completed(BOOL resultOk, DWORD length,
 	else // !resultOk, assumes connection was reset
 	{
 		int err = GetLastError();
-		std::cerr << "Error " << err << " in recv, assuming connection was reset by client" << std::endl;
+		std::cerr << "Error " << err << " in recv, assuming connection wasw reset by client" << std::endl;
 		destroy_connection(socketState);
 	}
 }
@@ -293,13 +301,17 @@ void Server::run()
 	for (;;)
 	{
 		resultOk = get_completion_status(&length, &socketState, &ovl_res);
+		if (!resultOk || socketState->toBeClosed){
+			destroy_connection(socketState);
+			continue;
+		}
 		
 		if (ovl_res == socketState->receiveOverlapped){
-			std::cout << "Receive finished" << std::endl;
+			//std::cout << "Receive finished" << std::endl;
 			read_completed(resultOk, length, socketState);
 		}
 		else if (ovl_res == socketState->sendOverlapped){
-			std::cout << "Send finished" << std::endl;
+			//std::cout << "Send finished" << std::endl;
 			write_completed(resultOk, length, socketState);
 		}
 		else if (socketState->sendOverlapped == nullptr){
