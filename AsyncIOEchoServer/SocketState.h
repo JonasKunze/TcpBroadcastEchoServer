@@ -9,7 +9,7 @@
 #include <iostream>
 
 enum Configs {
-	BUFF_LEN = 20,
+	BUFF_LEN = 10,
 	SERVER_ADDRESS = INADDR_LOOPBACK,
 	SERVICE_PORT = 1234,
 	NUMBER_OF_BUFFS = 3 // this makes 15 MB per client
@@ -27,11 +27,10 @@ public:
 
 	SOCKET socket;
 
-	unsigned int buffReadPtr;
-	unsigned int buffWritePtr;
-	unsigned int nextMessagePtr; // always between the two other pointers -> you may not read higher elements as they are not finished with writing yet
+	unsigned int buffReadPtr; // Next byte to be read
+	unsigned int buffWritePtr; // Next byte to be written
+	unsigned int nextMessagePtr; // always between the two other pointers -> you may not read this or higher bytes as they belong to an unfinished message
 	unsigned int lastByteWritten;
-	unsigned int firstByteWritten;
 
 	std::atomic<int> ongoingOps;
 	WSAOVERLAPPED* sendOverlapped;
@@ -49,11 +48,10 @@ public:
 		socket = -1;
 
 		// start at BUFF_LEN so that we have space to copy unfinished messages from the back later
-		buffReadPtr = BUFF_LEN;
-		buffWritePtr = BUFF_LEN;
-		nextMessagePtr = BUFF_LEN;
-		firstByteWritten = BUFF_LEN;
-		lastByteWritten = BUFF_LEN;
+		buffReadPtr = 0;
+		buffWritePtr = 0;
+		nextMessagePtr = 0;
+		lastByteWritten = 0;
 
 		ongoingOps = 0;
 		sendOverlapped = nullptr;
@@ -80,24 +78,23 @@ public:
 
 		unsigned int freeSpace = 0;
 
-		while (freeSpace < BUFF_LEN) {
+		if (buffWritePtr == buffSize) {
+			while (buffReadPtr == 0){
+				// wait until the space is free on the front of the buffer
+				std::this_thread::sleep_for(std::chrono::microseconds(100));
+			}
+			buffWritePtr = 0;
+		}
+
+		while (freeSpace == 0) {
 			if (buffWritePtr < buffReadPtr) { // write is left of read
 				freeSpace = buffReadPtr - buffWritePtr - 1;
 			}
 			else { // write is right of read
 				freeSpace = buffSize - buffWritePtr;
-				if (freeSpace < BUFF_LEN){
-					// Wait if we did not read the first message in the buffer
-					while (buffReadPtr <= BUFF_LEN){
-						std::this_thread::sleep_for(std::chrono::microseconds(100));
-					}
-					buffWritePtr = BUFF_LEN;
-					firstByteWritten = BUFF_LEN;
-					continue; // now jump into the first if (buffWritePtr < buffReadPtr)
-				}
 			}
 
-			if (freeSpace < BUFF_LEN){
+			if (freeSpace == 0){
 				// wait until enough space is free
 				std::this_thread::sleep_for(std::chrono::microseconds(100));
 			}
@@ -111,6 +108,11 @@ public:
 	}
 
 	void writeFinished() {
+
+		if (buffWritePtr == 53 && nextMessagePtr == 53) {
+			std::cout << "!!" << std::endl;
+		}
+
 		print("writeFinished");
 		buffWritePtr += currentWriteBuff.len;
 
@@ -121,36 +123,37 @@ public:
 		// calculate new buffer pointers and move unfinished messages to the beginning of the buffer
 		findMessages();
 
-		std::this_thread::sleep_for(std::chrono::microseconds(1000));
 		print("writeFinished2");
 	}
 
 	void findMessages() {
+
+		unsigned int writtenBytes = buffWritePtr - nextMessagePtr; // number of bytes between ack byte and the last written one
+		unsigned int bytesTillEndOfBuff = buffSize - nextMessagePtr;
+
 		// Check if we jumped back to the beginning last time. In this case the next message starts at firstByteWritten
 		if (nextMessagePtr > buffWritePtr) {
-			nextMessagePtr = firstByteWritten;
+			writtenBytes = buffSize - nextMessagePtr;
 		}
 
-		unsigned int availableBytes = buffWritePtr - nextMessagePtr; // number of bytes between ack byte and the last written one
-
-		MessageHeader* hdr;
-		for (;;) { // Move from message to message
+		MessageHeader* hdr = nullptr;
+		for (; writtenBytes>=sizeof(MessageHeader);) { // Move from message to message
 			hdr = reinterpret_cast<MessageHeader*>(buff + nextMessagePtr);
-			if (hdr->messageLength > BUFF_LEN){
+			if (hdr->messageLength > BUFF_LEN) {
 				std::cerr << "Received message longer than the allowed maximum of " << BUFF_LEN << std::endl;
 				exit(1);
 			}
-			if (hdr->messageLength <= availableBytes) {
+			if (hdr->messageLength <= writtenBytes) {
 				nextMessagePtr += hdr->messageLength;
 
-				if (hdr->messageLength == availableBytes){
+				if (hdr->messageLength == writtenBytes){
 					break;
 				}
 
-				availableBytes -= hdr->messageLength;
-
+				writtenBytes -= hdr->messageLength;
+				bytesTillEndOfBuff -= hdr->messageLength;
 				// Check if the  next header can even be complete
-				if (availableBytes < sizeof(MessageHeader)){
+				if (writtenBytes < sizeof(MessageHeader)){
 					break;
 				}
 			}
@@ -161,16 +164,16 @@ public:
 
 
 		// Check if enough space is left to the right or if we have to jump back to the beginning
-		if (availableBytes < sizeof(MessageHeader) || nextMessagePtr + hdr->messageLength < availableBytes) {
-			while (buffReadPtr < BUFF_LEN){
+		if (bytesTillEndOfBuff < sizeof(MessageHeader) || hdr->messageLength > bytesTillEndOfBuff) {
+			while (buffReadPtr < writtenBytes || buffReadPtr > nextMessagePtr){
 				// wait until the space is free on the front of the buffer
 				std::this_thread::sleep_for(std::chrono::microseconds(100));
 			}
 			// copy the beginning of the unfinished message to the front of the buffer (BUFF_LEN bytes are free there)
-			firstByteWritten = BUFF_LEN - availableBytes;
-			memcpy(buff + firstByteWritten, buff + nextMessagePtr, availableBytes);
-			buffWritePtr = firstByteWritten + availableBytes;
-			lastByteWritten -= availableBytes;
+			memcpy(buff + 0, buff + nextMessagePtr, writtenBytes);
+			buffWritePtr = writtenBytes;
+			lastByteWritten -= writtenBytes;
+			nextMessagePtr = 0;
 		}
 	}
 
@@ -180,17 +183,17 @@ public:
 	WSABUF* getReadableBuff() {
 		print("getReadableBuf");
 
-		if (buffReadPtr < nextMessagePtr && buffReadPtr> buffWritePtr){ // message has not been ack'd yet
+		if (buffReadPtr == nextMessagePtr || buffReadPtr == lastByteWritten){
 			return nullptr;
 		}
 
-		if (buffSize - buffReadPtr < BUFF_LEN) {
-			buffReadPtr = firstByteWritten;
+		if (buffReadPtr >= lastByteWritten && buffReadPtr > nextMessagePtr) {
+			buffReadPtr = 0;
 			lastByteWritten = 0;
 		}
 
 		// wait as long as the buffer is empty
-		if (buffReadPtr == nextMessagePtr || buffReadPtr == lastByteWritten){
+		if (buffReadPtr == nextMessagePtr){
 			return nullptr;
 		}
 

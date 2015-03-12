@@ -359,7 +359,8 @@ void Server::start_accepting() {
 	memset(&mySocketOverlapped, 0, sizeof(WSAOVERLAPPED));
 
 	// starts asynchronous accept
-	if (!pfAcceptEx(mySocket, acceptor, mySocketState.getWritableBuff(), 0 /* no recv */,
+	char dummyBuff[1];
+	if (!pfAcceptEx(mySocket, acceptor, dummyBuff, 0 /* no recv */,
 		expected, expected, NULL, (WSAOVERLAPPED*)&mySocketOverlapped))
 	{
 		int err = WSAGetLastError();
