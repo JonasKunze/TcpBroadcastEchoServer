@@ -187,6 +187,9 @@ public:
 		}
 
 		if (buffReadPtr >= lastByteWritten && buffReadPtr > nextMessagePtr) {
+			if (nextMessagePtr == 0) {
+				return nullptr;
+			}
 			buffReadPtr = 0;
 			lastByteWritten = 0;
 		}
