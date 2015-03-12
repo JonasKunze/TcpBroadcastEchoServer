@@ -158,6 +158,11 @@ void Server::accept_completed(BOOL resultOk, DWORD length,
 		setsockopt(socketState->socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
 			(char *)&mySocket, sizeof(mySocket));
 
+		// deactivate nagle's algorithm
+		//int flag = 1;
+		//int result = setsockopt(mySocket, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(int));
+
+
 		// associates new socket with completion port
 		newSocketState = new_socket_state();
 		newSocketState->socket = socketState->socket;
