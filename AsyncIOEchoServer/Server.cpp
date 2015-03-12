@@ -147,7 +147,7 @@ void Server::write_completed(BOOL resultOk, DWORD length,
  
 
 void Server::accept_completed(BOOL resultOk, DWORD length,
-	SocketState* socketState) {
+	AcceptState* socketState) {
 
 	SocketState* newSocketState;
 
@@ -200,9 +200,9 @@ void Server::destroy_connection(SocketState* socketState)
 	if (socketState->ongoingOps == 0){
 		std::unique_lock<std::mutex> lock(clientsMutex);
 		clients.erase(socketState);
-		closesocket(socketState->socket);
-		delete socketState->sendOverlapped;
-		delete socketState->receiveOverlapped;
+		if (socketState->socket > 0){
+			closesocket(socketState->socket);
+		}
 		delete socketState;
 	}
 	else {
@@ -242,7 +242,6 @@ void Server::load_accept_ex()
 {
 	DWORD dwBytes;
 
-	// black magic for me
 	WSAIoctl(mySocket, SIO_GET_EXTENSION_FUNCTION_POINTER, &GuidAcceptEx,
 		sizeof(GuidAcceptEx), &pfAcceptEx, sizeof(pfAcceptEx), &dwBytes, NULL,
 		NULL);
@@ -250,18 +249,12 @@ void Server::load_accept_ex()
 
 SocketState* Server::new_socket_state() {
 	SocketState* state = new SocketState();
-	state->receiveOverlapped = new_overlapped();
-	state->sendOverlapped = new_overlapped();
 		
 	std::unique_lock<std::mutex> lock(clientsMutex);
 	clients.insert(state);
 	return state;
 }
 
-
-WSAOVERLAPPED* Server::new_overlapped() {
-	return (WSAOVERLAPPED*)calloc(1, sizeof(WSAOVERLAPPED));
-}
 
 void Server::read_completed(BOOL resultOk, DWORD length,
 	SocketState* socketState) {
@@ -339,7 +332,7 @@ void Server::run()
 		}
 		else if (socketState->sendOverlapped == nullptr){
 			std::cout << "New connection accepted" << std::endl;
-			accept_completed(resultOk, length, socketState);
+			accept_completed(resultOk, length, reinterpret_cast<AcceptState*>(socketState));
 		}
 		else {
 			std::cerr << "Unknown state! Aborting" << std::endl;
@@ -359,8 +352,8 @@ void Server::start_accepting() {
 	memset(&mySocketOverlapped, 0, sizeof(WSAOVERLAPPED));
 
 	// starts asynchronous accept
-	char* dummyBuff = new char[1];
-	if (!pfAcceptEx(mySocket, acceptor, dummyBuff, 0 /* no recv */,
+	
+	if (!pfAcceptEx(mySocket, acceptor, mySocketState.buf, 0 /* no recv */,
 		expected, expected, NULL, (WSAOVERLAPPED*)&mySocketOverlapped))
 	{
 		int err = WSAGetLastError();

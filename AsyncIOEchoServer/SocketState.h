@@ -20,6 +20,12 @@ struct MessageHeader {
 	unsigned int messageNumber;
 };
 
+
+struct AcceptState {
+	SOCKET socket;
+	char buf[100];
+};
+
 class SocketState
 {
 public:
@@ -62,6 +68,11 @@ public:
 		toBeClosed = false;
 
 		bytesMissingForCurrentMessage = 0;
+
+		
+		sendOverlapped = (WSAOVERLAPPED*)calloc(1, sizeof(WSAOVERLAPPED));
+		receiveOverlapped = (WSAOVERLAPPED*)calloc(1, sizeof(WSAOVERLAPPED));
+
 
 		// Minimize fragmentation by allocating one single buffer and split it then 
 

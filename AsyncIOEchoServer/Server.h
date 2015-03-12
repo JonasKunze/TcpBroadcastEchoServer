@@ -26,7 +26,7 @@ private:
 
 	// the listening socket
 	SOCKET mySocket;
-	SocketState mySocketState;
+	AcceptState mySocketState;
 	WSAOVERLAPPED mySocketOverlapped;
 
 	// utility: variables used to load the AcceptEx function
@@ -56,14 +56,13 @@ private:
 
 
 	 void accept_completed(BOOL resultOk, DWORD length,
-		 SocketState* socketState);
+		 AcceptState* socketState);
 	 SOCKET create_accepting_socket();
 	 void destroy_connection(SocketState* socketState);
 	 BOOL get_completion_status(DWORD* length, SocketState** socketState,
 		 WSAOVERLAPPED** ovl_res);
 	 void load_accept_ex();
 	 SocketState* new_socket_state();
-	 WSAOVERLAPPED* new_overlapped();
 
 	 void read_completed(BOOL resultOk, DWORD length,
 		 SocketState* socketState);

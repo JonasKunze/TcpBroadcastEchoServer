@@ -2,4 +2,7 @@
 
 SocketState::~SocketState() {
 	delete[] buff; // delete the big memory block used by all buffers
+
+	delete sendOverlapped;
+	delete receiveOverlapped;
 }
