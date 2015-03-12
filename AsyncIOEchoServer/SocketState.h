@@ -6,11 +6,12 @@
 #include <atomic>
 #include <mutex>
 #include <thread>
+#include <condition_variable>
 #include <iostream>
 
 enum Configs {
-	BUFF_LEN = 1500,
-	SERVER_ADDRESS = INADDR_LOOPBACK,
+	MAX_MSG_LEN = 1500,
+	SERVER_ADDRESS = INADDR_ANY,
 	SERVICE_PORT = 1234,
 	NUMBER_OF_BUFFS = 1000 // this makes 15 MB per client
 };
@@ -48,12 +49,18 @@ public:
 	bool toBeClosed;
 
 	unsigned int bytesMissingForCurrentMessage;
-	char unfinishedMsgBuffer[BUFF_LEN];
+	char unfinishedMsgBuffer[MAX_MSG_LEN];
 
-	SocketState() : buffSize(NUMBER_OF_BUFFS*BUFF_LEN + 1) {
+	/*
+	 * Use a condition variable to wake up a writing thread waiting for a reading one to free up some memory
+	 */
+	std::mutex readMutex;
+	std::condition_variable readCondVar;
+
+	SocketState() : buffSize(NUMBER_OF_BUFFS*MAX_MSG_LEN + 1) {
 		socket = -1;
 
-		// start at BUFF_LEN so that we have space to copy unfinished messages from the back later
+		// start at MAX_MSG_LEN so that we have space to copy unfinished messages from the back later
 		buffReadPtr = 0;
 		buffWritePtr = 0;
 		nextMessagePtr = 0;
@@ -139,8 +146,8 @@ public:
 		MessageHeader* hdr = nullptr;
 		for (; writtenBytes>=sizeof(MessageHeader);) { // Move from message to message
 			hdr = reinterpret_cast<MessageHeader*>(buff + nextMessagePtr);
-			if (hdr->messageLength > BUFF_LEN) {
-				std::cerr << "Received message longer than the allowed maximum of " << BUFF_LEN << std::endl;
+			if (hdr->messageLength > MAX_MSG_LEN) {
+				std::cerr << "Received message longer than the allowed maximum of " << MAX_MSG_LEN << std::endl;
 				exit(1);
 			}
 			if (hdr->messageLength <= writtenBytes) {
@@ -165,11 +172,20 @@ public:
 
 		// Check if enough space is left to the right or if we have to jump back to the beginning
 		if (bytesTillEndOfBuff < sizeof(MessageHeader) || hdr->messageLength > bytesTillEndOfBuff) {
+			// wait until the space is free on the front of the buffer
+			std::unique_lock<std::mutex> lock(readMutex);
+			readCondVar.wait(lock, [this, writtenBytes]{
+				return (buffReadPtr >= writtenBytes && buffReadPtr <= nextMessagePtr); 
+			});
+
+			/*
 			while (buffReadPtr < writtenBytes || buffReadPtr > nextMessagePtr){
 				// wait until the space is free on the front of the buffer
-				std::this_thread::sleep_for(std::chrono::microseconds(100));
+				std::unique_lock<std::mutex> lock(readMutex);
+				
 			}
-			// copy the beginning of the unfinished message to the front of the buffer (BUFF_LEN bytes are free there)
+			*/
+			// copy the beginning of the unfinished message to the front of the buffer (MAX_MSG_LEN bytes are free there)
 			memcpy(buff + 0, buff + nextMessagePtr, writtenBytes);
 			buffWritePtr = writtenBytes;
 			lastByteWritten -= writtenBytes;
@@ -218,6 +234,7 @@ public:
 	*/
 	void readFinished() {
 		buffReadPtr += currentReadBuff.len;
+		readCondVar.notify_all();
 	}
 };
 

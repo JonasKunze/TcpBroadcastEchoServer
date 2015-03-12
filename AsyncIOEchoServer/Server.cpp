@@ -94,7 +94,7 @@ void Server::start_reading(SocketState* socketState) {
 
 void Server::startBroadcasting(SocketState* socketState) {
 	WSABUF* receivedMessages;
-	while ((receivedMessages = socketState->getReadableBuff())!=nullptr) {	
+	while ((receivedMessages = socketState->getReadableBuff())!=nullptr) {
 		char* buff = new char[receivedMessages->len];
 		memcpy(buff, receivedMessages->buf, receivedMessages->len);
 		WSABUF broadcastMessages = { receivedMessages->len, buff };

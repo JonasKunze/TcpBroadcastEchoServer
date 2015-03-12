@@ -11,6 +11,7 @@ serverAddresses(std::move(_serverAddresses)), serverPort(serverPort), numberOfMe
 	initWinsock();
 	reconnect();
 
+	setMessageHandlerFunction(getDefaultMessageHandler());
 	receiverThread = new std::thread(&Client::receiveMessages, this);
 }
 
@@ -22,6 +23,18 @@ Client::~Client() {
 			cerr << "Error " << err << " in closesocket" << endl;
 		}
 	}
+}
+
+std::function<void(MessageHeader*)> Client::getDefaultMessageHandler() {
+	return  [&](MessageHeader* header) {
+		if (numberOfMessagesReceived % 1000 == 0) {
+			cout << "Received " << numberOfMessagesReceived << " messages" << endl;
+		}
+
+		if (verbose) {
+			cout << "Received message " << header->messageNumber << " with " << header->messageLength << " B: " << ((char*)header) + sizeof(MessageHeader) << std::endl;
+		}
+	};
 }
 
 void Client::initWinsock() {
@@ -87,10 +100,10 @@ void Client::reconnect() {
 }
 
 void Client::receiveMessages() {
-	char buf[BUFLEN];
+	char buf[MAX_MSG_LEN];
 
 	char* bufPtr = buf;
-	unsigned int bufferFree = BUFLEN;
+	unsigned int bufferFree = MAX_MSG_LEN;
 	MessageHeader* header = nullptr;
 
 	while (true) {
@@ -98,10 +111,6 @@ void Client::receiveMessages() {
 			int len = recv(sock, bufPtr, bufferFree, 0);
 
 			if (len > 0) {
-				if (verbose) {
-					cout << "Received " << len << "B: " << bufPtr << endl;
-				}
-
 				if (!header) {
 					header = reinterpret_cast<MessageHeader*>(bufPtr);
 				}
@@ -110,7 +119,7 @@ void Client::receiveMessages() {
 				bufPtr += len;
 			
 				// check if a message is complete
-				if (header->messageLength <= BUFLEN - bufferFree){
+				if (header->messageLength <= MAX_MSG_LEN - bufferFree){
 					break;
 				}
 
@@ -134,24 +143,16 @@ void Client::receiveMessages() {
 		* Find all messages within the data
 		*/
 		bufPtr = buf;
-		while (bufferFree < BUFLEN) {
+		while (bufferFree < MAX_MSG_LEN) {
 			header = reinterpret_cast<MessageHeader*>(bufPtr);
-			unsigned int bytesRemaining = BUFLEN - bufferFree;
+			unsigned int bytesRemaining = MAX_MSG_LEN - bufferFree;
 			if (header->messageLength <= bytesRemaining) {
 				numberOfMessagesReceived++;
 
 				/*
 				 * Here comes the code processing incoming messages
 				*/
-
-				if (numberOfMessagesReceived % 1000 == 0) {
-					cout << "Received " << numberOfMessagesReceived << " messages" << endl;
-				}
-
-				if (verbose) {
-					string message(bufPtr + sizeof(MessageHeader), header->messageLength-sizeof(MessageHeader));
-					cout << "Received message " << header->messageNumber << " with " << header->messageLength << " B: " << message.c_str() << std::endl;
-				}
+				messageHandlerFunction(header);
 
 				// 'free' the message buffer and allow to override it
 				bufferFree += header->messageLength;
@@ -162,14 +163,14 @@ void Client::receiveMessages() {
 				// move the message to the beginning of the buffer to free up some space for more data
 				memcpy(buf, bufPtr, bytesRemaining);
 				bufPtr = buf + bytesRemaining;
-				bufferFree = BUFLEN - bytesRemaining;
+				bufferFree = MAX_MSG_LEN - bytesRemaining;
 				break;
 			}
 		}
 		// move back to the beginning of the receive buffer if no unfinished message has been found
 		if (header == nullptr) {
 			bufPtr = buf;
-			bufferFree = BUFLEN;
+			bufferFree = MAX_MSG_LEN;
 		}
 	}
 }

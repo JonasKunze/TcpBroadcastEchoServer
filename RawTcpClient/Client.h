@@ -5,7 +5,7 @@
 #include <mutex>
 #include <condition_variable>
 
-#define BUFLEN 1500
+#define MAX_MSG_LEN 1500
 namespace std {
 	class thread;
 }
@@ -18,6 +18,9 @@ struct MessageHeader {
 class Client
 {
 public:
+	unsigned int numberOfMessagesSent;
+	unsigned int numberOfMessagesReceived;
+
 	Client(std::vector<std::string>&& serverAddresses, const unsigned int serverPort);
 	virtual ~Client();
 
@@ -32,6 +35,15 @@ public:
 		return verbose;
 	}
 
+	void setMessageHandlerFunction(std::function<void(MessageHeader*)> function){
+		messageHandlerFunction = function;
+	}
+
+	std::function<void(MessageHeader*)> getDefaultMessageHandler();
+
+
+	
+
 private:
 	const std::vector<std::string> serverAddresses;
 	const unsigned int serverPort;
@@ -41,8 +53,7 @@ private:
 
 	const std::thread* receiverThread;
 
-	unsigned int numberOfMessagesSent;
-	unsigned int numberOfMessagesReceived;
+	std::function<void(MessageHeader*)> messageHandlerFunction;
 
 	bool verbose;
 
