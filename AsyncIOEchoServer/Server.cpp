@@ -359,7 +359,7 @@ void Server::start_accepting() {
 	memset(&mySocketOverlapped, 0, sizeof(WSAOVERLAPPED));
 
 	// starts asynchronous accept
-	char dummyBuff[1];
+	char* dummyBuff = new char[1];
 	if (!pfAcceptEx(mySocket, acceptor, dummyBuff, 0 /* no recv */,
 		expected, expected, NULL, (WSAOVERLAPPED*)&mySocketOverlapped))
 	{

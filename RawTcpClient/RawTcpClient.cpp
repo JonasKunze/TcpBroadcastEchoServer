@@ -40,7 +40,10 @@ void main() {
 				continue;
 			}
 						
-			const char* buf = new char[len];
+			char* buf = new char[len];
+			for (int i = 0; i < len; i++){
+				buf[i] = 'a'+(i%26);
+			}
 
 			cout << "\tSending data storm with " << msgNum << " messages of " << len << " B each" << endl;
 			

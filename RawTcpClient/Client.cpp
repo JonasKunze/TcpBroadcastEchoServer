@@ -15,6 +15,13 @@ serverAddresses(std::move(_serverAddresses)), serverPort(serverPort), numberOfMe
 }
 
 Client::~Client() {
+	if (sock > 0) {
+		cout << "Disconnecting" << endl;
+		if (closesocket(sock) != 0){
+			int err = WSAGetLastError();
+			cerr << "Error " << err << " in closesocket" << endl;
+		}
+	}
 }
 
 void Client::initWinsock() {
@@ -34,6 +41,10 @@ void Client::createSocket()	{
 		printf("* error %d creating socket\n", err);
 		exit(1);
 	}
+
+	// deactivate nagle's algorithm
+	int flag = 1;
+	//int result = setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(int)); 
 }
 
 void Client::doConnect() {
@@ -59,11 +70,12 @@ void Client::reconnect() {
 	if (connectionMutex.try_lock()){
 		if (sock > 0) {
 			cout << "Disconnecting" << endl;
+			if (closesocket(sock) != 0){
+				int err = WSAGetLastError();
+				cerr << "Error " << err << " in closesocket" << endl;
+			}
 		}
-		if (closesocket(sock) != 0){
-			int err = WSAGetLastError();
-			cerr << "Error " << err << " in closesocket" << endl;
-		}
+
 		sock = -1;
 		createSocket();
 		doConnect();
@@ -121,12 +133,16 @@ void Client::receiveMessages() {
 		/*
 		* Find all messages within the data
 		*/
+		bufPtr = buf;
 		while (bufferFree < BUFLEN) {
-			bufPtr = buf;
 			header = reinterpret_cast<MessageHeader*>(bufPtr);
 			unsigned int bytesRemaining = BUFLEN - bufferFree;
 			if (header->messageLength <= bytesRemaining) {
 				numberOfMessagesReceived++;
+
+				/*
+				 * Here comes the code processing incoming messages
+				*/
 
 				if (numberOfMessagesReceived % 1000 == 0) {
 					cout << "Received " << numberOfMessagesReceived << " messages" << endl;
@@ -136,6 +152,8 @@ void Client::receiveMessages() {
 					string message(bufPtr + sizeof(MessageHeader), header->messageLength-sizeof(MessageHeader));
 					cout << "Received message " << header->messageNumber << " with " << header->messageLength << " B: " << message.c_str() << std::endl;
 				}
+
+				// 'free' the message buffer and allow to override it
 				bufferFree += header->messageLength;
 				bufPtr += header->messageLength;
 				header = nullptr;
@@ -170,6 +188,8 @@ void Client::sendMessage(const char* data, const int len) {
 	memcpy(buf + sizeof(MessageHeader), data, len);
 	
 	sendData(buf, header->messageLength);
+
+	delete[] buf;
 	//sendData(data, len);
 
 	// print status feedback

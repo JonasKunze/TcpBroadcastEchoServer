@@ -9,10 +9,10 @@
 #include <iostream>
 
 enum Configs {
-	BUFF_LEN = 10,
+	BUFF_LEN = 1500,
 	SERVER_ADDRESS = INADDR_LOOPBACK,
 	SERVICE_PORT = 1234,
-	NUMBER_OF_BUFFS = 3 // this makes 15 MB per client
+	NUMBER_OF_BUFFS = 1000 // this makes 15 MB per client
 };
 
 struct MessageHeader {
@@ -69,12 +69,10 @@ public:
 	}
 
 
-	void print(std::string name);
 	/*
 	Returns a pointer to a free buffer with maximum available size. This may only be called by one thread (producer)
 	*/
 	WSABUF* getWritableBuff() {
-		print("getWritableBuf");
 
 		unsigned int freeSpace = 0;
 
@@ -103,17 +101,10 @@ public:
 		currentWriteBuff.len = freeSpace;
 		currentWriteBuff.buf = buff + buffWritePtr;
 
-		print("getWritableBuf2");
 		return &currentWriteBuff;
 	}
 
 	void writeFinished() {
-
-		if (buffWritePtr == 53 && nextMessagePtr == 53) {
-			std::cout << "!!" << std::endl;
-		}
-
-		print("writeFinished");
 		buffWritePtr += currentWriteBuff.len;
 
 		if (buffWritePtr>lastByteWritten){
@@ -122,8 +113,6 @@ public:
 
 		// calculate new buffer pointers and move unfinished messages to the beginning of the buffer
 		findMessages();
-
-		print("writeFinished2");
 	}
 
 	void findMessages() {
@@ -181,7 +170,6 @@ public:
 	* Returns the number of elements that may be read from the pointer on.  This may only be called by one thread (consumer)
 	*/
 	WSABUF* getReadableBuff() {
-		print("getReadableBuf");
 
 		if (buffReadPtr == nextMessagePtr || buffReadPtr == lastByteWritten){
 			return nullptr;
@@ -208,8 +196,6 @@ public:
 		}
 
 		MessageHeader* hdr = reinterpret_cast<MessageHeader*>(currentReadBuff.buf);
-		std::cout << currentReadBuff.len << "!!" << hdr->messageLength << std::endl;
-		print("getReadableBuf2");
 		return &currentReadBuff;
 	}
 
@@ -217,9 +203,7 @@ public:
 	Should be called after all elements accessed via getReadableBuffs() are read and may be overwritten.
 	*/
 	void readFinished() {
-		print("readFinished");
 		buffReadPtr += currentReadBuff.len;
-		print("readFinished2");
 	}
 };
 
