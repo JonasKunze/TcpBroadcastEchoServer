@@ -1,11 +1,12 @@
 #include "Server.h"
 
 #include <iostream>
+#include <vector>
 
 //using namespace std; // don't use it because <mutex> redefines bind()
 
 
-Server::Server() : GuidAcceptEx(WSAID_ACCEPTEX){
+Server::Server() : GuidAcceptEx(WSAID_ACCEPTEX), readJobs(1000), writeJobs(1000), mySocketState(){
 	initWinsock();
 	create_io_completion_port();
 	createSocket();
@@ -47,7 +48,7 @@ void Server::createSocket() {
 	mySocketState.socket = -1;
 
 	if (CreateIoCompletionPort((HANDLE)mySocket, completionPort,
-		(ULONG_PTR)&mySocketState, 0) != completionPort)	{
+		(ULONG_PTR)&mySocketState, 0) != completionPort) {
 		int err = WSAGetLastError();
 		std::cerr << "Error " << err << " in mySocket" << std::endl;
 		exit(1);
@@ -92,29 +93,34 @@ void Server::start_reading(SocketState* socketState) {
 }
 
 void Server::startBroadcasting(SocketState* socketState) {
-	WSABUF* wsaBuffers;
-	unsigned int buffNum = socketState->getReadableBuffs(wsaBuffers);
+	WSABUF* receivedMessages;
+	while ((receivedMessages = socketState->getReadableBuff())!=nullptr) {	
+		char* buff = new char[receivedMessages->len];
+		memcpy(buff, receivedMessages->buf, receivedMessages->len);
+		WSABUF broadcastMessages = { receivedMessages->len, buff };
+		socketState->readFinished();
 
-	std::unique_lock<std::mutex> lock(clientsMutex);
-	for (auto& client : clients) {
-		if (client->toBeClosed) {
-			continue;
-		}
-		client->ongoingOps++;
+		std::unique_lock<std::mutex> lock(clientsMutex);
+		for (auto& client : clients) {
+			if (client->toBeClosed) {
+				continue;
+			}
+			client->ongoingOps++;
 
-		// Sends all buffs available to the current connected client
-		if (WSASend(client->socket, wsaBuffers, buffNum, NULL, 0, client->sendOverlapped, NULL)
-			== SOCKET_ERROR)
-		{
-			int err = WSAGetLastError();
-			if (err != WSA_IO_PENDING)
+			// Sends all buffs available to the current connected client
+			if (WSASend(client->socket, &broadcastMessages, 1, NULL, 0, client->sendOverlapped, NULL)
+				== SOCKET_ERROR)
 			{
-				std::cout << "Error " << err << " in WSASend " << client->socket << "\t" << client->ongoingOps << "\t" << client->toBeClosed << std::endl;
-				destroy_connection(client);
+				int err = WSAGetLastError();
+				if (err != WSA_IO_PENDING)
+				{
+					std::cout << "Error " << err << " in WSASend " << client->socket << "\t" << client->ongoingOps << "\t" << client->toBeClosed << std::endl;
+					destroy_connection(client);
+				}
 			}
 		}
+		delete[] buff;
 	}
-	socketState->readFinished(buffNum);
 }
 
 void Server::write_completed(BOOL resultOk, DWORD length,
@@ -125,11 +131,7 @@ void Server::write_completed(BOOL resultOk, DWORD length,
 	memset(socketState->sendOverlapped, 0, sizeof(WSAOVERLAPPED));
 	if (resultOk)
 	{
-		if (length > 0)
-		{
-			//start_reading(socketState);
-		}
-		else
+		if (length <= 0)
 		{
 			std::cout << "Connection closed by client!" << std::endl;
 			destroy_connection(socketState);
@@ -261,85 +263,27 @@ WSAOVERLAPPED* Server::new_overlapped() {
 	return (WSAOVERLAPPED*)calloc(1, sizeof(WSAOVERLAPPED));
 }
 
-void Server::findMessages(SocketState* socketState){
-	unsigned int currentMsgPtr = 0;
-	unsigned int availableBytes = socketState->currentWriteBuff->len;
-	
-	const bool lastBufferContainsUnfinishedMsg = socketState->bytesMissingForCurrentMessage != 0;
-
-	if (availableBytes > socketState->bytesMissingForCurrentMessage) {// the current message has been finished
-		do {
-			currentMsgPtr += socketState->bytesMissingForCurrentMessage; // get next message
-		    availableBytes -= socketState->bytesMissingForCurrentMessage;
-
-			MessageHeader* hdr = reinterpret_cast<MessageHeader*>(socketState->currentWriteBuff->buf + currentMsgPtr);
-			socketState->bytesMissingForCurrentMessage = hdr->messageLength;
-		} while (availableBytes > socketState->bytesMissingForCurrentMessage);
-		if (availableBytes == socketState->bytesMissingForCurrentMessage) {
-			socketState->bytesMissingForCurrentMessage = 0;
-		}
-		else {
-			socketState->bytesMissingForCurrentMessage -= availableBytes;
-		}
-	}
-	else { // The current message is still not finished
-		socketState->bytesMissingForCurrentMessage -= availableBytes;
-	}
-
-	if (socketState->bytesMissingForCurrentMessage != 0) { // The last message hast not been completely transmitted
-		WSABUF* nextBuff = socketState->getWritableBuff(false);
-
-		// If the buffer is in the end of the array we would send back an unfinished message! So we have to get a new buffer which will be the first in the buffer array. 
-		// This way next time we will send this buffer together with the remaining part of the unfinished message
-		bool bufferWasLastOfArray = socketState->isLastWritableBufferAtEndOfArray();
-		if (bufferWasLastOfArray){
-			// Allow to read the last buffer but make it empty
-			nextBuff->len = 0;
-			nextBuff = socketState->getWritableBuff(false);
-		}
-
-		// Copy the beginning of the unfinished message to the next buffer but do not acknowledge the reading of this buffer yet
-		memcpy(nextBuff->buf, socketState->currentWriteBuff->buf + currentMsgPtr, availableBytes);
-		socketState->currentWriteBuff->len -= availableBytes;
-		nextBuff->len = availableBytes;
-
-		// Now we are done with the current buffer
-		if (bufferWasLastOfArray) {
-			socketState->writeFinished(); // acknowledge reading of empty buffer
-		}
-	}
-
-
-	// If last buffer contained an unfinished message it is finished now -> acknowledge the usage of the last buffer
-	if (lastBufferContainsUnfinishedMsg){
-		socketState->writeFinished();
-	}
-}
-
 void Server::read_completed(BOOL resultOk, DWORD length,
 	SocketState* socketState) {
 	socketState->ongoingOps--;
 
 	if (resultOk){
 		if (length > 0)	{
-			//std::std::cout << "Received " << socketState->buf << std::std::endl;
-
-			
+			//std::cout << "Received " << socketState->currentWriteBuff.buf+8 << std::endl;
+						
 			memset(socketState->receiveOverlapped, 0, sizeof(WSAOVERLAPPED));
-			socketState->currentWriteBuff->len = length;
 
-			findMessages(socketState);
-			
+			socketState->currentWriteBuff.len = length;
 			socketState->writeFinished();
 
 
-				// carry on reading and broadcast the messages
-			start_reading(socketState);
-			startBroadcasting(socketState);
+			// carry on reading and broadcast the messages
+			readJobs.push(socketState);
+			writeJobs.push(socketState);
 		}
 		else // length == 0
 		{
-			std::cout << "* connection closed by client" << std::endl;
+			std::cout << "Connection closed by client" << std::endl;
 			destroy_connection(socketState);
 		}
 	}
@@ -351,21 +295,40 @@ void Server::read_completed(BOOL resultOk, DWORD length,
 	}
 }
 
+void Server::readThread() {
+	SocketState* socketState;
+	while (true){
+		readJobs.pop(socketState);
+		start_reading(socketState);
+	}
+}
+
+void Server::writeThread() {
+	SocketState* socketState;
+	while (true){
+		writeJobs.pop(socketState);
+		startBroadcasting(socketState);
+	}
+}
+
 void Server::run()
 {
+	std::thread readThread(&Server::readThread, this);
+	std::thread writeThread(&Server::writeThread, this);
+
 	DWORD length;
 	BOOL resultOk;
 	WSAOVERLAPPED* ovl_res;
 	SocketState* socketState;
 
-	for (;;)
+	while (true)
 	{
 		resultOk = get_completion_status(&length, &socketState, &ovl_res);
 		if (!resultOk || socketState->toBeClosed){
 			destroy_connection(socketState);
 			continue;
 		}
-		
+
 		if (ovl_res == socketState->receiveOverlapped){
 			//std::cout << "Receive finished" << std::endl;
 			read_completed(resultOk, length, socketState);
