@@ -6,7 +6,7 @@
 //using namespace std; // don't use it because <mutex> redefines bind()
 
 
-Server::Server() : GuidAcceptEx(WSAID_ACCEPTEX), readJobs(1000), writeJobs(1000), mySocketState(){
+Server::Server() : GuidAcceptEx(WSAID_ACCEPTEX), readJobs(10000), writeJobs(10000), mySocketState(){
 	initWinsock();
 	create_io_completion_port();
 	createSocket();
@@ -78,8 +78,6 @@ void Server::prepareSocket() {
 void Server::start_reading(SocketState* socketState) {
 	DWORD flags = 0;
 
-	socketState->ongoingOps++;
-
 	if (WSARecv(socketState->socket, socketState->getWritableBuff(), 1, NULL, &flags, socketState->receiveOverlapped, NULL)
 		== SOCKET_ERROR)
 	{
@@ -95,39 +93,35 @@ void Server::start_reading(SocketState* socketState) {
 void Server::startBroadcasting(SocketState* socketState) {
 	WSABUF* receivedMessages;
 	while ((receivedMessages = socketState->getReadableBuff())!=nullptr) {
-		char* buff = new char[receivedMessages->len];
-		memcpy(buff, receivedMessages->buf, receivedMessages->len);
-		WSABUF broadcastMessages = { receivedMessages->len, buff };
-		socketState->readFinished();
-
+		//char* buff = new char[receivedMessages->len];
+		//memcpy(buff, receivedMessages->buf, receivedMessages->len);
+		//WSABUF broadcastMessages = { receivedMessages->len, buff };
+		
 		std::unique_lock<std::mutex> lock(clientsMutex);
 		for (auto& client : clients) {
 			if (client->toBeClosed) {
 				continue;
 			}
-			client->ongoingOps++;
-
 			// Sends all buffs available to the current connected client
-			if (WSASend(client->socket, &broadcastMessages, 1, NULL, 0, client->sendOverlapped, NULL)
+			if (WSASend(client->socket, receivedMessages, 1, NULL, 0, client->sendOverlapped, NULL)
 				== SOCKET_ERROR)
 			{
 				int err = WSAGetLastError();
 				if (err != WSA_IO_PENDING)
 				{
-					std::cout << "Error " << err << " in WSASend " << client->socket << "\t" << client->ongoingOps << "\t" << client->toBeClosed << std::endl;
+					std::cout << "Error " << err << " in WSASend"<< std::endl;
 					destroy_connection(client);
 				}
 			}
 		}
-		delete[] buff;
+		socketState->readFinished();
+		//delete[] buff;
 	}
 }
 
 void Server::write_completed(BOOL resultOk, DWORD length,
 	SocketState* socketState)
 {
-	socketState->ongoingOps--;
-
 	memset(socketState->sendOverlapped, 0, sizeof(WSAOVERLAPPED));
 	if (resultOk)
 	{
@@ -159,8 +153,8 @@ void Server::accept_completed(BOOL resultOk, DWORD length,
 			(char *)&mySocket, sizeof(mySocket));
 
 		// deactivate nagle's algorithm
-		//int flag = 1;
-		//int result = setsockopt(mySocket, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(int));
+		int flag = 1;
+		int result = setsockopt(mySocket, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(int));
 
 
 		// associates new socket with completion port
@@ -201,17 +195,17 @@ SOCKET Server::create_accepting_socket()
 
 
 void Server::destroy_connection(SocketState* socketState)
-{	
-	if (socketState->ongoingOps == 0){
-		std::unique_lock<std::mutex> lock(clientsMutex);
-		clients.erase(socketState);
-		if (socketState->socket > 0){
-			closesocket(socketState->socket);
-		}
-		delete socketState;
+{		
+	
+	if (socketState->toBeClosed){	
+		if (socketState->socket > 0 && !closesocket(socketState->socket)){
+			delete socketState;
+		}	
 	}
 	else {
 		socketState->toBeClosed = true;
+		std::unique_lock<std::mutex> lock(clientsMutex);
+		clients.erase(socketState);
 	}
 }
 
@@ -263,8 +257,6 @@ SocketState* Server::new_socket_state() {
 
 void Server::read_completed(BOOL resultOk, DWORD length,
 	SocketState* socketState) {
-	socketState->ongoingOps--;
-
 	if (resultOk){
 		if (length > 0)	{
 			//std::cout << "Received " << socketState->currentWriteBuff.buf+8 << std::endl;

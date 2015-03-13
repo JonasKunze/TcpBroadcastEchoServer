@@ -11,10 +11,8 @@
 using namespace std;
 
 void runStormTest(Client& client, int msgLen, int msgNum){
-	char* buf = new char[msgLen];
-	for (int i = 0; i < msgLen; i++){
-		buf[i] = 'a' + (i % 26);
-	}
+	MessageHeader* data = reinterpret_cast<MessageHeader*>(new char[msgLen]);
+	data->messageLength = msgLen;
 
 	cout << "\tSending data storm with " << msgNum << " messages of " << msgLen << " B each" << endl;
 
@@ -22,7 +20,7 @@ void runStormTest(Client& client, int msgLen, int msgNum){
 	client.setVerbosity(false);
 	long long start = Utils::getCurrentMillis();
 	for (int i = 0; i != msgNum; i++) {
-		client.sendMessage(buf, msgLen);
+		client.sendMessage(data);
 	}
 
 	long long time = Utils::getCurrentMillis() - start;
@@ -30,7 +28,7 @@ void runStormTest(Client& client, int msgLen, int msgNum){
 		time = 1;
 	}
 
-	delete[] buf;
+	delete[] data;
 
 	long long datarate = (msgNum*msgLen) / time;
 	long long msgrate = datarate * 1000 / msgLen;
@@ -43,37 +41,34 @@ void runStormTest(Client& client, int msgLen, int msgNum){
 void runRttTest(Client& client, int msgLen) {
 	cout << "Measuring round trip time with messages of " << msgLen << " B each" << endl;
 	
-	std::mutex mutex;
-	std::condition_variable condVar;
-	std::unique_lock<std::mutex> lock(mutex);
+	MessageHeader* data = reinterpret_cast<MessageHeader*>(new char[msgLen]);
+	data->messageLength = msgLen;
 
-	char* buf = new char[msgLen];
-	const unsigned int msgNum = 100;
+	const unsigned int msgNum = 1000;
 	const unsigned int lastMessageNumber = client.numberOfMessagesReceived + msgNum;
-	long long endTime;
+	long long endTime=0;
 	client.setMessageHandlerFunction([&](MessageHeader* msg){ 
 		if (client.numberOfMessagesReceived < lastMessageNumber) {
-			client.sendMessage(buf, msgLen);
+			client.sendMessage(data);
 		}
 		else {
 			endTime = Utils::getCurrentMillis();
 			client.setMessageHandlerFunction(client.getDefaultMessageHandler());
-
-			// notify runRttTest
-			std::unique_lock<std::mutex> lock(mutex);
-			condVar.notify_all();
 		}
 	});
 
+	// Start ping pong by sending one single message
 	long long start = Utils::getCurrentMillis();
-	client.sendMessage(buf, msgLen);
+	client.sendMessage(data);
 
-	// Wait until the last message has been received
-	condVar.wait(lock);
+	// Wait until the last message has been received. Conditoin_variable seems not to work with std::function
+	while (endTime==0){
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	}
 
-	float rtt = 1000*(endTime - start)/msgNum;
+	float rtt = (endTime - start)/(float)msgNum;
 
-	cout << "Average rtt for " << msgNum << " messages was " << rtt << "µs" << endl;
+	cout << "Average rtt for " << msgNum << " messages was " << rtt << "ms" << endl;
 }
 
 void main() {
@@ -95,9 +90,14 @@ void main() {
 		else if (msg.compare("help") == 0)
 		{
 			cout << "\tFollowing commands can be used:" << endl;
-			cout << "\t\tstorm <msgNum> <length>" << endl;
+			cout << "\t\tstorm <msgNum> <msglength>" << endl;
+			cout << "\t\t\tMeasure bandwidth/message rate" << endl;
+			cout << "\t\trtt <msglength>" << endl;
+			cout << "\t\t\tMeasure the round trip time" << endl;
 			cout << "\t\tverbose <1or0>" << endl;
+			cout << "\t\t\tSet verbosity (hide message 'Received message...')" << endl;
 			cout << "\t\tquit" << endl;
+			cout << "\t\t\tGoodbye!" << endl;
 		} 
 		else if (msg.compare(0,5, "storm") == 0) 
 		{

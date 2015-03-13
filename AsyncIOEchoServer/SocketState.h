@@ -39,7 +39,6 @@ public:
 	unsigned int nextMessagePtr; // always between the two other pointers -> you may not read this or higher bytes as they belong to an unfinished message
 	unsigned int lastByteWritten;
 
-	std::atomic<int> ongoingOps;
 	WSAOVERLAPPED* sendOverlapped;
 	WSAOVERLAPPED* receiveOverlapped;
 	WSABUF currentWriteBuff;
@@ -66,7 +65,6 @@ public:
 		nextMessagePtr = 0;
 		lastByteWritten = 0;
 
-		ongoingOps = 0;
 		sendOverlapped = nullptr;
 		receiveOverlapped = nullptr;
 

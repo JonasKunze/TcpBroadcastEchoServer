@@ -32,6 +32,8 @@ std::function<void(MessageHeader*)> Client::getDefaultMessageHandler() {
 		}
 
 		if (verbose) {
+			// finish string in case \0 was not send (which I don't do)
+			((char*)header)[header->messageLength] = '\0';
 			cout << "Received message " << header->messageNumber << " with " << header->messageLength << " B: " << ((char*)header) + sizeof(MessageHeader) << std::endl;
 		}
 	};
@@ -57,7 +59,7 @@ void Client::createSocket()	{
 
 	// deactivate nagle's algorithm
 	int flag = 1;
-	//int result = setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(int)); 
+	int result = setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(int)); 
 }
 
 void Client::doConnect() {
@@ -175,24 +177,23 @@ void Client::receiveMessages() {
 	}
 }
 void Client::sendMessage(std::string&& msg){
-	sendMessage(msg.data(), msg.length() + 1 /* '\0' */);
-}
-
-void Client::sendMessage(const char* data, const int len) {
-	//char headderBuffer[sizeof(MessageHeader)];
-	char* buf = new char[len + sizeof(MessageHeader)];
+	char* buf = new char[msg.length() + sizeof(MessageHeader)];
 	
 	MessageHeader* header = reinterpret_cast<MessageHeader*>(buf);
-	header->messageLength = len + sizeof(MessageHeader);
+	header->messageLength = msg.length() + sizeof(MessageHeader);
 	header->messageNumber = numberOfMessagesSent++;
 
-	memcpy(buf + sizeof(MessageHeader), data, len);
-	
-	sendData(buf, header->messageLength);
+	memcpy(buf + sizeof(MessageHeader), msg.data(), msg.length());
 
+	sendMessage(header);
 	delete[] buf;
-	//sendData(data, len);
+}
 
+void Client::sendMessage(MessageHeader* data) {
+	//char headderBuffer[sizeof(MessageHeader)];
+	
+	sendData(reinterpret_cast<char*>(data), data->messageLength);
+	
 	// print status feedback
 	if (numberOfMessagesSent % 1000 == 0) {
 		cout << "." << flush;

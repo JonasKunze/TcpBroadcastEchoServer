@@ -24,7 +24,7 @@ public:
 	Client(std::vector<std::string>&& serverAddresses, const unsigned int serverPort);
 	virtual ~Client();
 
-	void sendMessage(const char data[], const int len);
+	void sendMessage(MessageHeader* data);
 	void sendMessage(std::string&& msg);
 
 	void setVerbosity(bool verbose) {
@@ -40,10 +40,7 @@ public:
 	}
 
 	std::function<void(MessageHeader*)> getDefaultMessageHandler();
-
-
 	
-
 private:
 	const std::vector<std::string> serverAddresses;
 	const unsigned int serverPort;
