@@ -72,10 +72,14 @@ void runRttTest(Client& client, int msgLen) {
 	cout << "Measuring round trip time with messages of " << msgLen << " B each"
 			<< endl;
 
+	// mute the client
+	bool oldVerbose = client.getVerbosity();
+	client.setVerbosity(false);
+
 	MessageHeader* data = reinterpret_cast<MessageHeader*>(new char[msgLen]);
 	data->messageLength = msgLen;
 
-	const unsigned int msgNum = 1000000;
+	const unsigned int msgNum = 1000;
 	const unsigned int lastMessageNumber = client.numberOfMessagesReceived
 			+ msgNum;
 	long long endTime = 0;
@@ -101,16 +105,17 @@ void runRttTest(Client& client, int msgLen) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
 
-	float rtt = (endTime - start) / (float) msgNum;
+	float rtt = 1000*(endTime - start) / (float) msgNum;
 
-	cout << "Average rtt for " << msgNum << " messages was " << rtt << "ms"
+	cout << "Average rtt for " << msgNum << " messages was " << rtt << "microseconds"
 			<< endl;
+	client.setVerbosity(oldVerbose);
 }
 
 void main(int argc, char *argv[]) {
 	Options::initialize(argc, argv);
 
-	Client client(std::move(Options::servers));
+	Client client(std::move(Options::servers), Options::nodelay);
 
 	std::string msg;
 	while (true) {

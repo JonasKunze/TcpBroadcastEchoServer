@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <iostream>
 
+
 enum Configs {
 	MAX_MSG_LEN = 1500,
 	NUMBER_OF_BUFFS = 1000 // this makes 15 MB per client
@@ -41,7 +42,12 @@ public:
 	WSABUF currentReadBuff;
 	char* buff;
 	const unsigned int buffSize;
+
+	std::atomic<int> pendingOperations;
 	bool toBeClosed;
+	std::mutex closeMutex;
+	bool ownedByWriteThread;
+
 
 	unsigned int bytesMissingForCurrentMessage;
 	char unfinishedMsgBuffer[MAX_MSG_LEN];
@@ -51,6 +57,7 @@ public:
 	 */
 	std::mutex readMutex;
 	std::condition_variable readCondVar;
+
 
 	SocketState();
 
@@ -62,9 +69,7 @@ public:
 
 	void findMessages();
 
-
 	WSABUF* getReadableBuff();
-
 
 	void readFinished();
 };

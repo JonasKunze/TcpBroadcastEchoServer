@@ -20,7 +20,8 @@ public:
 	unsigned int numberOfMessagesSent;
 	unsigned int numberOfMessagesReceived;
 
-	Client(std::vector<std::pair<std::string, unsigned int>>&& serverAddressesAndPorts);
+	Client(std::vector<std::pair<std::string, unsigned int>>&& serverAddressesAndPorts,
+		bool nodelay);
 	virtual ~Client();
 
 	void sendMessage(MessageHeader* data);
@@ -54,6 +55,8 @@ private:
 	std::function<void(MessageHeader*)> messageHandlerFunction;
 
 	bool verbose;
+
+	const bool nodelay;
 
 	void initWinsock();
 

@@ -9,5 +9,6 @@ public:
 	static void initialize(int argc, char *argv[]);
 
 	static std::vector<std::pair<std::string, unsigned int>> servers;
+	static bool nodelay;
 };
 

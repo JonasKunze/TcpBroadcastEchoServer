@@ -11,11 +11,14 @@ using namespace std;
  * As soon as the connection get's close by the remote a client will automatically try to connect to any other
  * server from the provided server list
  */
-Client::Client(std::vector<std::pair<std::string, unsigned int>>&& serverAddressesAndPorts) :
-	serverAddressesAndPorts(std::move(serverAddressesAndPorts)), numberOfMessagesSent(
-				0), numberOfMessagesReceived(0), sock(-1), verbose(true) {
+Client::Client(
+		std::vector<std::pair<std::string, unsigned int>>&& serverAddressesAndPorts,
+		bool nodelay) :
+		serverAddressesAndPorts(std::move(serverAddressesAndPorts)), numberOfMessagesSent(
+				0), numberOfMessagesReceived(0), sock(-1), verbose(true), nodelay(
+				nodelay) {
 	// Seed for randomization of server connections
-	srand(time(NULL));
+	srand((unsigned int) time(NULL));
 
 	initWinsock();
 	reconnect();
@@ -33,7 +36,6 @@ Client::~Client() {
 		}
 	}
 }
-
 
 /*
  * Runs WSAStartup to initiate the usage of ws2
@@ -60,9 +62,14 @@ void Client::createSocket() {
 	}
 
 	// deactivate nagle's algorithm
-	int flag = 1;
-	int result = setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char *) &flag,
-			sizeof(int));
+	if (setsockopt(sock, IPPROTO_TCP, TCP_NODELAY,
+		(char *)&nodelay, sizeof(nodelay))
+		== SOCKET_ERROR) {
+		int err = WSAGetLastError();
+		std::cerr << "Error " << err << " in setsockopt TCP_NODELAY"
+			<< std::endl;
+		exit(1);
+	}
 }
 
 /*
@@ -97,16 +104,15 @@ void Client::doConnect() {
 	for (unsigned int serverID = rand();; serverID++) {
 		sin.sin_family = AF_INET;
 
-		auto& addressAndPort = serverAddressesAndPorts[serverID % serverAddressesAndPorts.size()];
+		auto& addressAndPort = serverAddressesAndPorts[serverID
+				% serverAddressesAndPorts.size()];
 
 		//sin.sin_addr.s_addr = inet_addr(addressAndPort.first.c_str());
 		sin.sin_addr = stringToIp(addressAndPort.first);
 		sin.sin_port = htons(addressAndPort.second);
 
-		cout << "Trying to connect to server "
-				<< addressAndPort.first.c_str()
-				<< ":" << addressAndPort.second
-				<< endl;
+		cout << "Trying to connect to server " << addressAndPort.first.c_str()
+				<< ":" << addressAndPort.second << endl;
 		if (connect(sock, (struct sockaddr*) &sin, sizeof(sin)) < 0) {
 			int err = WSAGetLastError();
 			cerr << "Error " << err << " in connect" << endl;
@@ -133,7 +139,7 @@ void Client::receiveMessages() {
 			int len = recv(sock, bufPtr, bufferFree, 0);
 
 			if (len > 0) {
-				if (verbose) {				
+				if (verbose) {
 					cout << "Received " << len << " B" << endl;
 				}
 				if (!header) {
@@ -170,7 +176,8 @@ void Client::receiveMessages() {
 		while (bufferFree < bufferSize) {
 			header = reinterpret_cast<MessageHeader*>(bufPtr);
 			unsigned int bytesRemaining = bufferSize - bufferFree;
-			if (header->messageLength > 0 && header->messageLength <= bytesRemaining) {
+			if (header->messageLength > 0
+					&& header->messageLength <= bytesRemaining) {
 				numberOfMessagesReceived++;
 
 				/*
@@ -199,9 +206,9 @@ void Client::receiveMessages() {
 }
 
 /*
-* The Default message handler is used automatically if setMessageHandlerFunction has not been called. It
-* will print out useful messages about the received message
-*/
+ * The Default message handler is used automatically if setMessageHandlerFunction has not been called. It
+ * will print out useful messages about the received message
+ */
 std::function<void(MessageHeader*)> Client::getDefaultMessageHandler() {
 	return [&](MessageHeader* header) {
 		if (numberOfMessagesReceived % 1000 == 0) {
@@ -244,7 +251,7 @@ void Client::sendMessage(MessageHeader* data) {
 	sendData(reinterpret_cast<char*>(data), data->messageLength);
 
 	// print status feedback
-	if (numberOfMessagesSent % 1000 == 0) {
+	if (numberOfMessagesSent % 10000 == 0) {
 		cout << "." << flush;
 	}
 }
@@ -277,12 +284,12 @@ void Client::sendData(const char* data, const int len) {
 	}
 }
 
-in_addr Client::stringToIp(std::string address){
+in_addr Client::stringToIp(std::string address) {
 	hostent * record = gethostbyname(address.c_str());
-	if (record == NULL)	{
+	if (record == NULL) {
 		cerr << "Server " << address.c_str() << " in unavailable" << endl;
 		return in_addr();
 	}
-	return *((in_addr*)record->h_addr);
+	return *((in_addr*) record->h_addr);
 }
 
