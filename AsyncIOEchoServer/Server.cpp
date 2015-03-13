@@ -11,7 +11,7 @@
  * nodelay: if set to true the nagle's algorithm will be switched off
  */
 Server::Server(unsigned int portNumber, unsigned long receiveAddress, bool nodelay) :
-		GuidAcceptEx(WSAID_ACCEPTEX), readJobs(10000), writeJobs(10000), mySocketState(), portNumber(
+GuidAcceptEx(WSAID_ACCEPTEX), mySocketState(), portNumber(
 				portNumber), receiveAddress(receiveAddress), nodelay(nodelay) {
 	initWinsock();
 	createIoCompletionPort();
@@ -128,11 +128,10 @@ void Server::asyncBroadcast(SocketState_ptr socketState) {
 }
 
 /*
- * Checks the state after a read operation and reinitializes the socket sta
+ * Checks the state after a read operation
  */
 void Server::onSendComplete(BOOL resultOk, DWORD length,
 		SocketState_ptr socketState) {
-	memset(socketState->sendOverlapped, 0, sizeof(WSAOVERLAPPED));
 	if (resultOk) {
 		if (length <= 0) {
 			std::cout << "Connection closed by client!" << std::endl;
@@ -281,16 +280,16 @@ void Server::onReadComplete(BOOL resultOk, DWORD length,
 
 	if (resultOk) {
 		if (length > 0) {
-			std::cout << "Received " << length << " B" << std::endl;
+			//std::cout << "Received " << length << " B" << std::endl;
 
 			memset(socketState->receiveOverlapped, 0, sizeof(WSAOVERLAPPED));
 
 			socketState->currentWriteBuff.len = length;
 			socketState->writeFinished();
 
-			// carry on reading and broadcast the messages
-			readJobs.push(socketState);
-			writeJobs.push(socketState);
+			// enqueue a new read read task and 
+			readJobs[socketState->socket%WRITE_THREAD_NUM].push(socketState);
+			asyncBroadcast(socketState);
 		}
 		else // length == 0
 		{
@@ -302,7 +301,7 @@ void Server::onReadComplete(BOOL resultOk, DWORD length,
 	{
 		int err = GetLastError();
 		std::cerr << "Error " << err
-			<< " in recv, assuming connection wasw reset by client"
+			<< " in recv, assuming connection was reset by client"
 			<< std::endl;
 		closeConnection(socketState);
 	}
@@ -311,10 +310,10 @@ void Server::onReadComplete(BOOL resultOk, DWORD length,
 /*
  * The thread processing read operations (incoming messages)
  */
-void Server::readThread() {
+void Server::readThread(const int threadNum) {
 	SocketState_ptr socketState;
 	while (true) {
-		readJobs.pop(socketState);
+		readJobs[threadNum].pop(socketState);
 		asyncRead(socketState);
 	}
 }
@@ -322,11 +321,11 @@ void Server::readThread() {
 /*
  * The thread processing write operations (broadcasts)
  */
-void Server::writeThread() {
-	SocketState_ptr socketState;
+void Server::writeThread(const int threadNum) {
+	std::function<void()> job;
 	while (true) {
-		writeJobs.pop(socketState);
-		asyncBroadcast(socketState);
+		writeJobs[threadNum].pop(job);
+		job();
 	}
 }
 
@@ -334,8 +333,15 @@ void Server::writeThread() {
  * Spawns a read and a write thread and distributes finished IO jobs to those
  */
 void Server::run() {
-	std::thread readThread(&Server::readThread, this);
-	std::thread writeThread(&Server::writeThread, this);
+	// Spawn read and write thread pools
+	std::vector<std::thread> threadPool;
+	for (int i = 0; i < READ_THREAD_NUM; i++){
+		threadPool.push_back(std::thread(&Server::readThread, this, i));
+	}
+	for (int i = 0; i < WRITE_THREAD_NUM; i++){
+		threadPool.push_back(std::thread(&Server::writeThread, this, i));
+	}
+
 
 	DWORD length;
 	BOOL resultOk;
@@ -347,18 +353,27 @@ void Server::run() {
 		socketState->pendingOperations--;
 
 		if (ovl_res == socketState->receiveOverlapped) {
-			onReadComplete(resultOk, length, socketState);
-		} else if (ovl_res == socketState->sendOverlapped) {
+			//onReadComplete(resultOk, length, socketState);
+			writeJobs[socketState->socket%WRITE_THREAD_NUM].push(
+				std::function<void()>([=]() {
+				onReadComplete(resultOk, length, socketState);
+			}
+			));
+		}
+		else if (ovl_res == socketState->sendOverlapped) {
 			onSendComplete(resultOk, length, socketState);
-		} else if (socketState->sendOverlapped == nullptr) {
+		}
+		else if (socketState->sendOverlapped == nullptr) {
 			std::cout << "New connection accepted" << std::endl;
 			onAcceptComplete(resultOk, length,
-					reinterpret_cast<AcceptState*>(socketState.get()));
-		} else {
+				reinterpret_cast<AcceptState*>(socketState.get()));
+		}
+		else {
 			std::cerr << "Unknown state! Aborting" << std::endl;
 			exit(1);
 		}
 	}
+
 }
 
 /*

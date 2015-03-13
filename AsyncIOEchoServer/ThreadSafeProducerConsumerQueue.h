@@ -31,7 +31,7 @@ public:
 	std::mutex writeMutex;
 	std::condition_variable writeCondVar;
 
-	ThreadsafeProducerConsumerQueue(uint32_t size) :
+	ThreadsafeProducerConsumerQueue(uint32_t size=1000) :
 		Size_(size) {
 		readPos_ = 0;
 		writePos_ = 0;

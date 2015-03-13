@@ -30,7 +30,6 @@ SocketState::SocketState() :
 }
 
 SocketState::~SocketState() {
-	std::cout << "Destructing a SocketState instance " << socket << std::endl;
 	delete[] buff; // delete the big memory block used by all buffers
 
 	delete sendOverlapped;

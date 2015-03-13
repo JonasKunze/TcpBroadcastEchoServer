@@ -13,6 +13,8 @@
 #include "SocketState.h"
 #include "ThreadSafeProducerConsumerQueue.h"
 
+#define WRITE_THREAD_NUM 2
+#define READ_THREAD_NUM 2
 class Server
 {
 public:
@@ -54,11 +56,12 @@ private:
 	// mutex for clients (used for disconnections)
 	std::mutex clientsMutex;
 
-	// Queue for write jobs (broadcasts)
-	ThreadsafeProducerConsumerQueue<SocketState_ptr> writeJobs;
-
+	// Queues for write jobs (broadcasts). One queue per thread
+	ThreadsafeProducerConsumerQueue<std::function<void()>> writeJobs[WRITE_THREAD_NUM];
+	int writeJobRoundRobin;
+	
 	// Qeueu for read jobs (incoming messages)
-	ThreadsafeProducerConsumerQueue<SocketState_ptr> readJobs;
+	ThreadsafeProducerConsumerQueue<SocketState_ptr> readJobs[READ_THREAD_NUM];
 
 	void initWinsock();
 
@@ -90,9 +93,9 @@ private:
 
 	 void startAccepting();
 
-	 void readThread();
+	 void readThread(const int threadNum);
 
-	 void writeThread();
+	 void writeThread(const int threadNum);
 
 };
 

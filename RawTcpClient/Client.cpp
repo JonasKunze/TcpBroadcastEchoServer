@@ -246,14 +246,7 @@ void Client::sendMessage(std::string&& msg) {
  * Sends a message as is
  */
 void Client::sendMessage(MessageHeader* data) {
-	//char headderBuffer[sizeof(MessageHeader)];
-
 	sendData(reinterpret_cast<char*>(data), data->messageLength);
-
-	// print status feedback
-	if (numberOfMessagesSent % 10000 == 0) {
-		cout << "." << flush;
-	}
 }
 
 /*
