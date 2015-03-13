@@ -6,8 +6,14 @@
 
 using namespace std;
 
-Client::Client(std::vector<std::string>&& _serverAddresses, const unsigned int serverPort) : 
-serverAddresses(std::move(_serverAddresses)), serverPort(serverPort), numberOfMessagesSent(0), numberOfMessagesReceived(0), sock(-1), verbose(true){
+/*
+ * A client can be used to send messages to any of the provided servers and receive responses from the same server.
+ * As soon as the connection get's close by the remote a client will automatically try to connect to any other
+ * server from the provided server list
+ */
+Client::Client(std::vector<std::pair<std::string, unsigned int>>&& serverAddressesAndPorts) :
+	serverAddressesAndPorts(std::move(serverAddressesAndPorts)), numberOfMessagesSent(
+				0), numberOfMessagesReceived(0), sock(-1), verbose(true) {
 	initWinsock();
 	reconnect();
 
@@ -18,15 +24,19 @@ serverAddresses(std::move(_serverAddresses)), serverPort(serverPort), numberOfMe
 Client::~Client() {
 	if (sock > 0) {
 		cout << "Disconnecting" << endl;
-		if (closesocket(sock) != 0){
+		if (closesocket(sock) != 0) {
 			int err = WSAGetLastError();
 			cerr << "Error " << err << " in closesocket" << endl;
 		}
 	}
 }
 
+/*
+ * The Default message handler is used automatically if setMessageHandlerFunction has not been called. It
+ * will print out useful messages about the received message
+ */
 std::function<void(MessageHeader*)> Client::getDefaultMessageHandler() {
-	return  [&](MessageHeader* header) {
+	return [&](MessageHeader* header) {
 		if (numberOfMessagesReceived % 1000 == 0) {
 			cout << "Received " << numberOfMessagesReceived << " messages" << endl;
 		}
@@ -39,6 +49,9 @@ std::function<void(MessageHeader*)> Client::getDefaultMessageHandler() {
 	};
 }
 
+/*
+ * Runs WSAStartup to initiate the usage of ws2
+ */
 void Client::initWinsock() {
 	WSADATA wsaData;
 
@@ -49,7 +62,10 @@ void Client::initWinsock() {
 	}
 }
 
-void Client::createSocket()	{
+/*
+ * Crates a new TCP/IP socket
+ */
+void Client::createSocket() {
 	sock = socket(AF_INET, SOCK_STREAM, 0);
 	if (sock < 0) {
 		int err = WSAGetLastError();
@@ -59,33 +75,18 @@ void Client::createSocket()	{
 
 	// deactivate nagle's algorithm
 	int flag = 1;
-	int result = setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(int)); 
+	int result = setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char *) &flag,
+			sizeof(int));
 }
 
-void Client::doConnect() {
-	
-	// Trying all servers in an infinite loop starting with any random server
-	for (unsigned int serverID = rand();; serverID++) {
-		sin.sin_family = AF_INET;
-		sin.sin_addr.s_addr = inet_addr(serverAddresses[serverID % serverAddresses.size()].c_str());
-		sin.sin_port = htons(serverPort);
-
-		cout << "Trying to connect to server " << serverAddresses[serverID % serverAddresses.size()].c_str() << endl;
-		if (connect(sock, (struct sockaddr*)&sin, sizeof(sin)) < 0) {
-			int err = WSAGetLastError();
-			cerr << "Error " << err << " in connect" << endl;
-			continue;
-		}
-		cout << "Connection established!" << endl;
-		return;
-	}
-}
-
+/*
+ * Closes the current connection and connects to any other random server
+ */
 void Client::reconnect() {
-	if (connectionMutex.try_lock()){
+	if (connectionMutex.try_lock()) {
 		if (sock > 0) {
 			cout << "Disconnecting" << endl;
-			if (closesocket(sock) != 0){
+			if (closesocket(sock) != 0) {
 				int err = WSAGetLastError();
 				cerr << "Error " << err << " in closesocket" << endl;
 			}
@@ -101,6 +102,37 @@ void Client::reconnect() {
 	}
 }
 
+/*
+ * Loops over all known server addresses until it manages to connect to one of them
+ */
+void Client::doConnect() {
+
+	// Trying all servers in an infinite loop starting with any random server
+	for (unsigned int serverID = rand();; serverID++) {
+		sin.sin_family = AF_INET;
+
+		auto& addressAndPort = serverAddressesAndPorts[serverID % serverAddressesAndPorts.size()];
+		//sin.sin_addr.s_addr = inet_addr(addressAndPort.first.c_str());
+		sin.sin_addr = stringToIp(addressAndPort.first);
+		sin.sin_port = htons(addressAndPort.second);
+
+		cout << "Trying to connect to server "
+				<< addressAndPort.first.c_str()
+				<< ":" << addressAndPort.second
+				<< endl;
+		if (connect(sock, (struct sockaddr*) &sin, sizeof(sin)) < 0) {
+			int err = WSAGetLastError();
+			cerr << "Error " << err << " in connect" << endl;
+			continue;
+		}
+		cout << "Connection established!" << endl;
+		return;
+	}
+}
+
+/**
+ * Starts reading from the socket and finding messages in the data stream
+ */
 void Client::receiveMessages() {
 	char buf[MAX_MSG_LEN];
 
@@ -119,9 +151,9 @@ void Client::receiveMessages() {
 
 				bufferFree -= len;
 				bufPtr += len;
-			
+
 				// check if a message is complete
-				if (header->messageLength <= MAX_MSG_LEN - bufferFree){
+				if (header->messageLength <= MAX_MSG_LEN - bufferFree) {
 					break;
 				}
 
@@ -131,8 +163,7 @@ void Client::receiveMessages() {
 			// Error handling
 			if (len == 0) {
 				cout << "Connection closed by server" << endl;
-			}
-			else {
+			} else {
 				int err = WSAGetLastError();
 				cerr << "Error " << err << " in recv" << endl;
 			}
@@ -142,8 +173,8 @@ void Client::receiveMessages() {
 		}
 
 		/*
-		* Find all messages within the data
-		*/
+		 * Find all messages within the data
+		 */
 		bufPtr = buf;
 		while (bufferFree < MAX_MSG_LEN) {
 			header = reinterpret_cast<MessageHeader*>(bufPtr);
@@ -153,16 +184,15 @@ void Client::receiveMessages() {
 
 				/*
 				 * Here comes the code processing incoming messages
-				*/
+				 */
 				messageHandlerFunction(header);
 
 				// 'free' the message buffer and allow to override it
 				bufferFree += header->messageLength;
 				bufPtr += header->messageLength;
 				header = nullptr;
-			}
-			else { // the last message hasn't been received completely yet
-				// move the message to the beginning of the buffer to free up some space for more data
+			} else { // the last message hasn't been received completely yet
+					 // move the message to the beginning of the buffer to free up some space for more data
 				memcpy(buf, bufPtr, bytesRemaining);
 				bufPtr = buf + bytesRemaining;
 				bufferFree = MAX_MSG_LEN - bytesRemaining;
@@ -176,9 +206,13 @@ void Client::receiveMessages() {
 		}
 	}
 }
-void Client::sendMessage(std::string&& msg){
+
+/*
+ * Sends a message with the given string and a corresponding header
+ */
+void Client::sendMessage(std::string&& msg) {
 	char* buf = new char[msg.length() + sizeof(MessageHeader)];
-	
+
 	MessageHeader* header = reinterpret_cast<MessageHeader*>(buf);
 	header->messageLength = msg.length() + sizeof(MessageHeader);
 	header->messageNumber = numberOfMessagesSent++;
@@ -189,17 +223,23 @@ void Client::sendMessage(std::string&& msg){
 	delete[] buf;
 }
 
+/*
+ * Sends a message as is
+ */
 void Client::sendMessage(MessageHeader* data) {
 	//char headderBuffer[sizeof(MessageHeader)];
-	
+
 	sendData(reinterpret_cast<char*>(data), data->messageLength);
-	
+
 	// print status feedback
 	if (numberOfMessagesSent % 1000 == 0) {
 		cout << "." << flush;
 	}
 }
 
+/*
+ * Sends raw data as is
+ */
 void Client::sendData(const char* data, const int len) {
 	unsigned int remainingBytes = len;
 
@@ -224,3 +264,13 @@ void Client::sendData(const char* data, const int len) {
 		reconnect();
 	}
 }
+
+in_addr Client::stringToIp(std::string address){
+	hostent * record = gethostbyname(address.c_str());
+	if (record == NULL)	{
+		cerr << "Server " << address.c_str() << " in unavailable" << endl;
+		return in_addr();
+	}
+	return *((in_addr*)record->h_addr);
+}
+

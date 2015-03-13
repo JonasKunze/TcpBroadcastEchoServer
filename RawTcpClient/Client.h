@@ -7,7 +7,7 @@
 
 #define MAX_MSG_LEN 1500
 namespace std {
-	class thread;
+class thread;
 }
 
 struct MessageHeader {
@@ -15,16 +15,16 @@ struct MessageHeader {
 	unsigned int messageNumber;
 };
 
-class Client
-{
+class Client {
 public:
 	unsigned int numberOfMessagesSent;
 	unsigned int numberOfMessagesReceived;
 
-	Client(std::vector<std::string>&& serverAddresses, const unsigned int serverPort);
+	Client(std::vector<std::pair<std::string, unsigned int>>&& serverAddressesAndPorts);
 	virtual ~Client();
 
 	void sendMessage(MessageHeader* data);
+
 	void sendMessage(std::string&& msg);
 
 	void setVerbosity(bool verbose) {
@@ -35,15 +35,16 @@ public:
 		return verbose;
 	}
 
-	void setMessageHandlerFunction(std::function<void(MessageHeader*)> function){
+	void setMessageHandlerFunction(
+			std::function<void(MessageHeader*)> function) {
 		messageHandlerFunction = function;
 	}
 
 	std::function<void(MessageHeader*)> getDefaultMessageHandler();
-	
+
 private:
-	const std::vector<std::string> serverAddresses;
-	const unsigned int serverPort;
+	const std::vector<std::pair<std::string, unsigned int>> serverAddressesAndPorts;
+
 	int sock;
 	struct sockaddr_in sin;
 	std::mutex connectionMutex;
@@ -60,16 +61,12 @@ private:
 
 	void sendData(const char data[], const int len);
 
-	/*
-	* Loops over all server addresses until it manages to connect to one of them
-	*/
 	void doConnect();
 
-	/**
-	* Reads as many messages as available
-	*/
 	void receiveMessages();
 
 	void reconnect();
+
+	in_addr stringToIp(std::string);
 };
 
