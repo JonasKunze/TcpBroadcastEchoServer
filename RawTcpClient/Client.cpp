@@ -31,23 +31,6 @@ Client::~Client() {
 	}
 }
 
-/*
- * The Default message handler is used automatically if setMessageHandlerFunction has not been called. It
- * will print out useful messages about the received message
- */
-std::function<void(MessageHeader*)> Client::getDefaultMessageHandler() {
-	return [&](MessageHeader* header) {
-		if (numberOfMessagesReceived % 1000 == 0) {
-			cout << "Received " << numberOfMessagesReceived << " messages" << endl;
-		}
-
-		if (verbose) {
-			// finish string in case \0 was not send (which I don't do)
-			((char*)header)[header->messageLength] = '\0';
-			cout << "Received message " << header->messageNumber << " with " << header->messageLength << " B: " << ((char*)header) + sizeof(MessageHeader) << std::endl;
-		}
-	};
-}
 
 /*
  * Runs WSAStartup to initiate the usage of ws2
@@ -134,10 +117,11 @@ void Client::doConnect() {
  * Starts reading from the socket and finding messages in the data stream
  */
 void Client::receiveMessages() {
-	char buf[MAX_MSG_LEN];
+	const unsigned int bufferSize = MAX_MSG_LEN * 100;
+	char buf[bufferSize];
 
 	char* bufPtr = buf;
-	unsigned int bufferFree = MAX_MSG_LEN;
+	unsigned int bufferFree = bufferSize;
 	MessageHeader* header = nullptr;
 
 	while (true) {
@@ -145,6 +129,8 @@ void Client::receiveMessages() {
 			int len = recv(sock, bufPtr, bufferFree, 0);
 
 			if (len > 0) {
+				if (verbose){				cout << "Received " << len << " B" << endl;
+				}
 				if (!header) {
 					header = reinterpret_cast<MessageHeader*>(bufPtr);
 				}
@@ -153,7 +139,7 @@ void Client::receiveMessages() {
 				bufPtr += len;
 
 				// check if a message is complete
-				if (header->messageLength <= MAX_MSG_LEN - bufferFree) {
+				if (header->messageLength <= bufferSize - bufferFree) {
 					break;
 				}
 
@@ -176,10 +162,10 @@ void Client::receiveMessages() {
 		 * Find all messages within the data
 		 */
 		bufPtr = buf;
-		while (bufferFree < MAX_MSG_LEN) {
+		while (bufferFree < bufferSize) {
 			header = reinterpret_cast<MessageHeader*>(bufPtr);
-			unsigned int bytesRemaining = MAX_MSG_LEN - bufferFree;
-			if (header->messageLength <= bytesRemaining) {
+			unsigned int bytesRemaining = bufferSize - bufferFree;
+			if (header->messageLength > 0 && header->messageLength <= bytesRemaining) {
 				numberOfMessagesReceived++;
 
 				/*
@@ -195,16 +181,37 @@ void Client::receiveMessages() {
 					 // move the message to the beginning of the buffer to free up some space for more data
 				memcpy(buf, bufPtr, bytesRemaining);
 				bufPtr = buf + bytesRemaining;
-				bufferFree = MAX_MSG_LEN - bytesRemaining;
+				bufferFree = bufferSize - bytesRemaining;
 				break;
 			}
 		}
 		// move back to the beginning of the receive buffer if no unfinished message has been found
 		if (header == nullptr) {
 			bufPtr = buf;
-			bufferFree = MAX_MSG_LEN;
+			bufferFree = bufferSize;
 		}
 	}
+}
+
+/*
+* The Default message handler is used automatically if setMessageHandlerFunction has not been called. It
+* will print out useful messages about the received message
+*/
+std::function<void(MessageHeader*)> Client::getDefaultMessageHandler() {
+	return [&](MessageHeader* header) {
+		if (numberOfMessagesReceived % 1000 == 0) {
+			cout << "Received " << numberOfMessagesReceived << " messages" << endl;
+		}
+
+		if (verbose) {
+			// finish string in case \0 was not send (which I don't do)
+			char buf[MAX_MSG_LEN];
+			memcpy(buf, ((char*)header) + sizeof(MessageHeader), header->messageLength - sizeof(MessageHeader));
+			buf[header->messageLength - sizeof(MessageHeader)] = '\0';
+
+			cout << "Received message " << header->messageNumber << " with " << header->messageLength << " B: " << buf << std::endl;
+		}
+	};
 }
 
 /*

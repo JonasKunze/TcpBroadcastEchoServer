@@ -90,16 +90,20 @@ void Server::start_reading(SocketState* socketState) {
 	}
 }
 
+/*
+ * Sends all available messages in the buffer of socketState to all connected clients
+ */
 void Server::startBroadcasting(SocketState* socketState) {
+	
 	WSABUF* receivedMessages;
+
+	// send as many messages as available
 	while ((receivedMessages = socketState->getReadableBuff())!=nullptr) {
-		//char* buff = new char[receivedMessages->len];
-		//memcpy(buff, receivedMessages->buf, receivedMessages->len);
-		//WSABUF broadcastMessages = { receivedMessages->len, buff };
-		
+
 		std::unique_lock<std::mutex> lock(clientsMutex);
 		for (auto& client : clients) {
 			if (client->toBeClosed) {
+				destroy_connection(client);
 				continue;
 			}
 			// Sends all buffs available to the current connected client
@@ -107,15 +111,13 @@ void Server::startBroadcasting(SocketState* socketState) {
 				== SOCKET_ERROR)
 			{
 				int err = WSAGetLastError();
-				if (err != WSA_IO_PENDING)
-				{
+				if (err != WSA_IO_PENDING) {
 					std::cout << "Error " << err << " in WSASend"<< std::endl;
 					destroy_connection(client);
 				}
 			}
 		}
 		socketState->readFinished();
-		//delete[] buff;
 	}
 }
 
@@ -257,6 +259,11 @@ SocketState* Server::new_socket_state() {
 
 void Server::read_completed(BOOL resultOk, DWORD length,
 	SocketState* socketState) {
+	if (socketState->toBeClosed){
+		destroy_connection(socketState);
+		return;
+	}
+
 	if (resultOk){
 		if (length > 0)	{
 			//std::cout << "Received " << socketState->currentWriteBuff.buf+8 << std::endl;
@@ -289,6 +296,10 @@ void Server::readThread() {
 	SocketState* socketState;
 	while (true){
 		readJobs.pop(socketState);
+		if (socketState->toBeClosed){
+			destroy_connection(socketState);
+			continue;
+		}
 		start_reading(socketState);
 	}
 }
@@ -297,6 +308,10 @@ void Server::writeThread() {
 	SocketState* socketState;
 	while (true){
 		writeJobs.pop(socketState);
+		if (socketState->toBeClosed){
+			destroy_connection(socketState);
+			continue;
+		}
 		startBroadcasting(socketState);
 	}
 }

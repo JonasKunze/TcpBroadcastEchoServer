@@ -14,6 +14,11 @@ using namespace std;
  * Sends msgNum messages with msgLen Byte each to the server and measures the send data and message rate
  */
 void runStormTest(Client& client, int msgLen, int msgNum) {
+	if (msgLen < sizeof(MessageHeader) + 1) {
+		cout << "msgLen must be at least " << sizeof(MessageHeader) + 1 << endl;
+		return;
+	}
+
 	MessageHeader* data = reinterpret_cast<MessageHeader*>(new char[msgLen]);
 	data->messageLength = msgLen;
 
@@ -29,6 +34,7 @@ void runStormTest(Client& client, int msgLen, int msgNum) {
 	// Send msgNum messages and measure the time
 	long long start = Utils::getCurrentMillis();
 	for (int i = 0; i != msgNum; i++) {
+		data->messageNumber = i;
 		client.sendMessage(data);
 	}
 	long long time = Utils::getCurrentMillis() - start;
