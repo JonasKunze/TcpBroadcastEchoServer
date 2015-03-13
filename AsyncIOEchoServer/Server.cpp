@@ -6,7 +6,7 @@
 //using namespace std; // don't use it because <mutex> redefines bind()
 
 
-Server::Server() : GuidAcceptEx(WSAID_ACCEPTEX), readJobs(10000), writeJobs(10000), mySocketState(){
+Server::Server(unsigned long portNumber, unsigned long receiveAddress) : GuidAcceptEx(WSAID_ACCEPTEX), readJobs(10000), writeJobs(10000), mySocketState(), portNumber(portNumber), receiveAddress(receiveAddress){
 	initWinsock();
 	create_io_completion_port();
 	createSocket();
@@ -59,8 +59,8 @@ void Server::prepareSocket() {
 	struct sockaddr_in sin;
 
 	sin.sin_family = AF_INET;
-	sin.sin_addr.s_addr = htonl(SERVER_ADDRESS);
-	sin.sin_port = htons(SERVICE_PORT);
+	sin.sin_addr.s_addr = htonl(receiveAddress);
+	sin.sin_port = htons(portNumber);
 
 	if (bind(mySocket, (SOCKADDR*)&sin, sizeof(sin)) == SOCKET_ERROR) {
 		std::cerr << "Error in bind!" << std::endl;
@@ -71,7 +71,7 @@ void Server::prepareSocket() {
 		std::cerr << "Error in listen!" << std::endl;
 		exit(1);
 	}
-	std::cout << "* started listening for connection requests..." << std::endl;
+	std::cout << "Started listening for connections on port " << portNumber << std::endl;
 }
 
 

@@ -110,9 +110,6 @@ void runRttTest(Client& client, int msgLen) {
 void main(int argc, char *argv[]) {
 	Options::initialize(argc, argv);
 
-	vector<pair<string, unsigned int>> servers;
-	servers.push_back(std::make_pair("127.0.0.1", 1234));
-
 	Client client(std::move(Options::servers));
 
 	std::string msg;

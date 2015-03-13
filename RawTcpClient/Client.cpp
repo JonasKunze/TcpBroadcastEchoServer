@@ -14,6 +14,9 @@ using namespace std;
 Client::Client(std::vector<std::pair<std::string, unsigned int>>&& serverAddressesAndPorts) :
 	serverAddressesAndPorts(std::move(serverAddressesAndPorts)), numberOfMessagesSent(
 				0), numberOfMessagesReceived(0), sock(-1), verbose(true) {
+	// Seed for randomization of server connections
+	srand(time(NULL));
+
 	initWinsock();
 	reconnect();
 
@@ -95,6 +98,7 @@ void Client::doConnect() {
 		sin.sin_family = AF_INET;
 
 		auto& addressAndPort = serverAddressesAndPorts[serverID % serverAddressesAndPorts.size()];
+
 		//sin.sin_addr.s_addr = inet_addr(addressAndPort.first.c_str());
 		sin.sin_addr = stringToIp(addressAndPort.first);
 		sin.sin_port = htons(addressAndPort.second);
@@ -129,7 +133,8 @@ void Client::receiveMessages() {
 			int len = recv(sock, bufPtr, bufferFree, 0);
 
 			if (len > 0) {
-				if (verbose){				cout << "Received " << len << " B" << endl;
+				if (verbose) {				
+					cout << "Received " << len << " B" << endl;
 				}
 				if (!header) {
 					header = reinterpret_cast<MessageHeader*>(bufPtr);

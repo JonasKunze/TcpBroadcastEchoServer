@@ -11,8 +11,6 @@
 
 enum Configs {
 	MAX_MSG_LEN = 1500,
-	SERVER_ADDRESS = INADDR_ANY,
-	SERVICE_PORT = 1234,
 	NUMBER_OF_BUFFS = 1000 // this makes 15 MB per client
 };
 

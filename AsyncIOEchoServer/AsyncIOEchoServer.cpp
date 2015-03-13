@@ -8,10 +8,13 @@
 
 
 #include "Server.h"
+#include "Options.h"
 
-void main() {
+void main(int argc, char *argv[]) {	
 	_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
 
-	Server server;
+	Options::initialize(argc, argv);
+
+	Server server(Options::portNumber, INADDR_ANY);
 	server.run();
 }

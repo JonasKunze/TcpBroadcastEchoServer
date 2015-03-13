@@ -15,7 +15,7 @@
 class Server
 {
 public:
-	Server();
+	Server(unsigned long portNumber, unsigned long receiveAddress);
 	virtual ~Server();
 
 	void run();
@@ -26,6 +26,9 @@ private:
 
 	// the listening socket
 	SOCKET mySocket;
+	unsigned long portNumber;
+	unsigned long receiveAddress;
+
 	AcceptState mySocketState;
 	WSAOVERLAPPED mySocketOverlapped;
 

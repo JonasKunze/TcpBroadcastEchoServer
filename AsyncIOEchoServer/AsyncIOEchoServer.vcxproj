@@ -82,6 +82,7 @@
     <Text Include="ReadMe.txt" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Options.h" />
     <ClInclude Include="Server.h" />
     <ClInclude Include="SocketState.h" />
     <ClInclude Include="stdafx.h" />
@@ -90,6 +91,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AsyncIOEchoServer.cpp" />
+    <ClCompile Include="Options.cpp" />
     <ClCompile Include="Server.cpp" />
     <ClCompile Include="SocketState.cpp" />
     <ClCompile Include="stdafx.cpp" />
