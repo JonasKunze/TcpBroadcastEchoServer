@@ -13,7 +13,7 @@ using namespace std;
 /*
  * Sends msgNum messages with msgLen Byte each to the server and measures the send data and message rate
  */
-void runStormTest(Client& client, int msgLen, int msgNum) {
+void runStormTest(Client& client, unsigned int msgLen, unsigned int msgNum, unsigned int threadNum) {
 	if (msgLen < sizeof(MessageHeader) + 1) {
 		cout << "msgLen must be at least " << sizeof(MessageHeader) + 1 << endl;
 		return;
@@ -31,13 +31,44 @@ void runStormTest(Client& client, int msgLen, int msgNum) {
 	bool oldVerbose = client.getVerbosity();
 	client.setVerbosity(false);
 
-	// Send msgNum messages and measure the time
-	long long start = Utils::getCurrentMillis();
-	for (int i = 0; i != msgNum; i++) {
-		data->messageNumber = i;
-		client.sendMessage(data);
+	/*
+	 * Send msgNum messages and measure the time
+	 */
+	std::condition_variable condVar;
+	std::mutex mutex;
+
+	int numberOfThreads = 1;
+	bool start = false;
+	std::vector<std::thread> threadPool;
+	for (int i = 0; i != numberOfThreads; i++){
+		threadPool.push_back(std::thread([&](){
+			// wait for the start signal
+			{
+				std::unique_lock<std::mutex> lock(mutex);
+				if (!start){
+					condVar.wait(lock, [&]{
+						return start; 
+					});
+				}
+			}
+			for (int i = 0; i != msgNum / numberOfThreads; i++) {
+				data->messageNumber = i;
+				client.sendMessage(data);
+			}
+		}));	
 	}
-	long long time = Utils::getCurrentMillis() - start;
+	
+	// send start signal
+	start = true;
+	condVar.notify_all();
+	long long startTime = Utils::getCurrentMillis();
+
+	// Wait until all threads have finished
+	for (auto& thread: threadPool){
+		thread.join();
+	}
+
+	long long time = Utils::getCurrentMillis() - startTime;
 
 	delete[] data;
 
@@ -126,7 +157,7 @@ void main(int argc, char *argv[]) {
 			break;
 		} else if (msg.compare("help") == 0) {
 			cout << "\tFollowing commands can be used:" << endl;
-			cout << "\t\tstorm <msgNum> <msglength>" << endl;
+			cout << "\t\tstorm <msgNum> <msglength> <sendThreadNum>" << endl;
 			cout << "\t\t\tMeasure bandwidth/message rate" << endl;
 			cout << "\t\trtt <msglength>" << endl;
 			cout << "\t\t\tMeasure the round trip time" << endl;
@@ -136,16 +167,17 @@ void main(int argc, char *argv[]) {
 			cout << "\t\tquit" << endl;
 			cout << "\t\t\tGoodbye!" << endl;
 		} else if (msg.compare(0, 5, "storm") == 0) {
-			int len = 100;
-			int msgNum = 1000;
-			if (sscanf_s(msg.data() + 5, " %d %d", &msgNum, &len) != 2) {
+			unsigned int len = 100;
+			unsigned int msgNum = 1000;
+			unsigned int sendThreadNum = 4;
+			if (sscanf_s(msg.data() + 5, " %d %d %d", &msgNum, &len, &sendThreadNum) != 3) {
 				cerr
-						<< "Bad input format! Please use something like 'storm 10000 1000"
+						<< "Bad input format! Please use something like 'storm 10000 1000 8"
 						<< endl;
 				continue;
 			}
 
-			runStormTest(client, len, msgNum);
+			runStormTest(client, len, msgNum, sendThreadNum);
 		} else if (msg.compare(0, 3, "rtt") == 0) {
 			int msgLen = 100;
 			if (sscanf_s(msg.data() + 3, " %d", &msgLen) != 1) {

@@ -252,7 +252,7 @@ void Client::sendMessage(MessageHeader* data) {
 /*
  * Sends raw data as is
  */
-void Client::sendData(const char* data, const int len) {
+void Client::sendData(char* data, unsigned int len) {
 	unsigned int remainingBytes = len;
 
 	while (remainingBytes > 0) {

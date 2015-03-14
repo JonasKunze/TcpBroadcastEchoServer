@@ -31,7 +31,7 @@ public:
 	std::mutex writeMutex;
 	std::condition_variable writeCondVar;
 
-	ThreadsafeProducerConsumerQueue(uint32_t size=1000) :
+	ThreadsafeProducerConsumerQueue(uint32_t size = 1000) :
 		Size_(size) {
 		readPos_ = 0;
 		writePos_ = 0;
@@ -50,15 +50,16 @@ public:
 	* Push a new element into the circular queue. May only be called by one single thread (producer)!
 	*/
 	bool push(T&& element) {
+ 
 		const uint32_t nextElement = (writePos_ + 1) % Size_;
-		
+
 		std::unique_lock<std::mutex> lock(readMutex);
 		readCondVar.wait(lock, [this, nextElement]{
 			return (readPos_ != nextElement);
 		});
 		/*
 		while (readPos_ == nextElement) {
-			std::this_thread::sleep_for(std::chrono::microseconds(1));
+		std::this_thread::sleep_for(std::chrono::microseconds(1));
 		}
 		*/
 		Data[writePos_] = element;
@@ -71,14 +72,14 @@ public:
 	* remove the oldest element from the circular queue. May only be called by one single thread (consumer)!
 	*/
 	void pop(T& element) {
-		
+
 		// Workaround: Sometimes we receive a notification even though the pointer did not change yet. 'volatile' 
 		// seems not to be enough on Windows -> set a timeout
 		std::unique_lock<std::mutex> lock(writeMutex);
 		while (readPos_ == writePos_) {
 			//std::this_thread::sleep_for(std::chrono::microseconds(1));
 			writeCondVar.wait_for(lock, std::chrono::microseconds(10));
-		}		
+		}
 
 		const uint32_t nextElement = (readPos_ + 1) % Size_;
 

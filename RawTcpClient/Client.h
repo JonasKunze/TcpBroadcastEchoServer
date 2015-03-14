@@ -5,7 +5,10 @@
 #include <mutex>
 #include <condition_variable>
 
+#include "ThreadSafeProducerConsumerQueue.h"
+
 #define MAX_MSG_LEN 1500
+#define SEND_THREAD_NUM 4
 namespace std {
 class thread;
 }
@@ -52,6 +55,9 @@ private:
 
 	const std::thread* receiverThread;
 
+	int sendRoundRobinCounter;
+	ThreadsafeProducerConsumerQueue<std::pair<char*, unsigned int>> writeJobs[SEND_THREAD_NUM];
+
 	std::function<void(MessageHeader*)> messageHandlerFunction;
 
 	bool verbose;
@@ -62,7 +68,7 @@ private:
 
 	void createSocket();
 
-	void sendData(const char data[], const int len);
+	void sendData(char data[], unsigned int len);
 
 	void doConnect();
 

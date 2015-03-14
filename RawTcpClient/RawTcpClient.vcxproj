@@ -85,8 +85,10 @@
   <ItemGroup>
     <ClInclude Include="Client.h" />
     <ClInclude Include="Options.h" />
+    <ClInclude Include="resource.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="targetver.h" />
+    <ClInclude Include="ThreadSafeProducerConsumerQueue.h" />
     <ClInclude Include="Utils.h" />
   </ItemGroup>
   <ItemGroup>
@@ -94,6 +96,9 @@
     <ClCompile Include="Options.cpp" />
     <ClCompile Include="RawTcpClient.cpp" />
     <ClCompile Include="stdafx.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="RawTcpClient.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

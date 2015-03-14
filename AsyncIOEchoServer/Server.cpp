@@ -288,7 +288,7 @@ void Server::onReadComplete(BOOL resultOk, DWORD length,
 			socketState->writeFinished();
 
 			// enqueue a new read read task and 
-			readJobs[socketState->socket%WRITE_THREAD_NUM].push(socketState);
+			readJobs[socketState->socket%WRITE_THREAD_NUM].push(std::move(socketState));
 			asyncBroadcast(socketState);
 		}
 		else // length == 0
