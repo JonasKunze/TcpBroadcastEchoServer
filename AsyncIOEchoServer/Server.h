@@ -19,7 +19,7 @@
 class Server
 {
 public:
-	Server(unsigned int portNumber, unsigned long receiveAddress, bool nodelay, std::vector<std::pair<std::string, unsigned int>> otherServerAddressesAndPorts);
+	Server(unsigned int portNumber, unsigned long receiveAddress, bool nodelay, std::vector<std::pair<std::string, unsigned int>> otherServerAddressesAndPorts, bool noecho);
 	virtual ~Server();
 
 	void run();
@@ -39,6 +39,10 @@ private:
 
 	// receiver address (defining which network device should be used).
 	const unsigned long nodelay;
+
+	// If set to true messages will not be sent back to the client the message comes from. 
+	// This must be true if the server connects to other slave server to avoid infinite loops
+	const bool noecho;
 
 	const std::vector<std::pair<std::string, unsigned int>> otherServerAddressesAndPorts;
 

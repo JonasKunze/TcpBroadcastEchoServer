@@ -12,9 +12,9 @@
  * receiveAddres: defines the address/network device to which should be listened. Use INADDR_ANY to listen to any device
  * nodelay: if set to true the nagle's algorithm will be switched off
  */
-Server::Server(unsigned int portNumber, unsigned long receiveAddress, bool nodelay, std::vector<std::pair<std::string, unsigned int>> otherServerAddressesAndPorts) :
+Server::Server(unsigned int portNumber, unsigned long receiveAddress, bool nodelay, std::vector<std::pair<std::string, unsigned int>> otherServerAddressesAndPorts, bool noecho) :
 GuidAcceptEx(WSAID_ACCEPTEX), mySocketState(), portNumber(
-portNumber), receiveAddress(receiveAddress), otherServerAddressesAndPorts(otherServerAddressesAndPorts), nodelay(nodelay) {
+portNumber), receiveAddress(receiveAddress), otherServerAddressesAndPorts(otherServerAddressesAndPorts), nodelay(nodelay), noecho(noecho){
 	initWinsock();
 	createIoCompletionPort();
 	mySocket = createClientSocket();
@@ -165,7 +165,7 @@ void Server::asyncBroadcast(SocketState_ptr socketState) {
 		std::unique_lock<std::mutex> lock(clientsMutex);
 		for (auto& client : clients) {
 			// don't send back to the client the message comes from
-			if (client == socketState){
+			if (noecho && client == socketState){
 				continue;
 			}
 			client->pendingOperations++;
@@ -261,7 +261,6 @@ SOCKET Server::createSocket() {
 		std::cerr << "Error creating accept socket!" << std::endl;
 		exit(1);
 	}
-
 	return acceptor;
 }
 
