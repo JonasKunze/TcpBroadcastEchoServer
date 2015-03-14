@@ -9,6 +9,7 @@
 #include <thread>
 #include <iostream>
 #include <memory>
+#include <vector>
 
 #include "SocketState.h"
 #include "ThreadSafeProducerConsumerQueue.h"
@@ -18,7 +19,7 @@
 class Server
 {
 public:
-	Server(unsigned int portNumber, unsigned long receiveAddress, bool nodelay);
+	Server(unsigned int portNumber, unsigned long receiveAddress, bool nodelay, std::vector<std::pair<std::string, unsigned int>> otherServerAddressesAndPorts);
 	virtual ~Server();
 
 	void run();
@@ -28,8 +29,7 @@ private:
 	HANDLE completionPort;
 
 	// the socket for listening to new connections
-	SOCKET mySocketClient;
-	SOCKET mySocketServer;
+	SOCKET mySocket;
 
 	// my Socket port Number
 	const unsigned int portNumber;
@@ -40,9 +40,10 @@ private:
 	// receiver address (defining which network device should be used).
 	const unsigned long nodelay;
 
+	const std::vector<std::pair<std::string, unsigned int>> otherServerAddressesAndPorts;
+
 	// Socket state used for connection establishements
-	AcceptState mySocketStateClient;
-	AcceptState mySocketStateServer;
+	AcceptState mySocketState;
 
 	// Overlapped object for connection purposes
 	WSAOVERLAPPED mySocketOverlapped;
@@ -54,7 +55,6 @@ private:
 	// all connected clients and servers
 	typedef std::shared_ptr<SocketState> SocketState_ptr;
 	std::set<SocketState_ptr> clients;
-	std::set<SocketState_ptr> servers;
 
 	// mutex for clients (used for disconnections)
 	std::mutex clientsMutex;
@@ -70,7 +70,7 @@ private:
 
 	void createIoCompletionPort();
 	 
-	SOCKET createSocket(bool createServerAcceptSocket);
+	SOCKET createClientSocket();
 
 	void asyncRead(SocketState_ptr socketState);
 
@@ -82,19 +82,19 @@ private:
 
 	 void onAcceptComplete(BOOL resultOk, DWORD length,
 		 AcceptState* socketState);
-	 SOCKET createAcceptingSocket();
+	 SOCKET createSocket();
 	 
 	 void closeConnection(SocketState_ptr socketState);
 
 	 BOOL getCompletionStatus(DWORD* length, SocketState_ptr* socketState,
 		 WSAOVERLAPPED** ovl_res);
 	 void loadAcceptEx();
-	 SocketState_ptr createNewSocketState(bool createServerState);
+	 SocketState_ptr createNewSocketState();
 
 	 void onReadComplete(BOOL resultOk, DWORD length,
 		 SocketState_ptr socketState);
 
-	 void startAccepting(bool acceptServer);
+	 void startAccepting();
 
 	 void readThread(const int threadNum);
 
