@@ -11,13 +11,15 @@
  * nodelay: if set to true the nagle's algorithm will be switched off
  */
 Server::Server(unsigned int portNumber, unsigned long receiveAddress, bool nodelay) :
-GuidAcceptEx(WSAID_ACCEPTEX), mySocketState(), portNumber(
+GuidAcceptEx(WSAID_ACCEPTEX), mySocketStateClient(), mySocketStateServer(), portNumber(
 				portNumber), receiveAddress(receiveAddress), nodelay(nodelay) {
 	initWinsock();
 	createIoCompletionPort();
-	createSocket();
+	mySocketClient = createSocket(false);
+	mySocketServer = createSocket(true);
 	loadAcceptEx();
-	startAccepting();
+	startAccepting(true);
+	startAccepting(false);
 }
 
 Server::~Server() {
@@ -52,19 +54,21 @@ void Server::createIoCompletionPort() {
 /*
  * Initializes the instance variable mySocket with a new TCP/IP socket
  */
-void Server::createSocket() {
-	mySocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if (mySocket == INVALID_SOCKET) {
+SOCKET Server::createSocket(bool createServerAcceptSocket) {
+	SOCKET newSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (newSocket == INVALID_SOCKET) {
 		std::cerr << "Error creating listening socket!" << std::endl;
 		exit(1);
 	}
 
-	mySocketState.socket = -1;
+	AcceptState& acceptState = createServerAcceptSocket ? mySocketStateServer : mySocketStateClient;
+	acceptState.socket = -1;
+	acceptState.isServerAccepted = createServerAcceptSocket;
 
-	if (CreateIoCompletionPort((HANDLE) mySocket, completionPort,
-			(ULONG_PTR) & mySocketState, 0) != completionPort) {
+	if (CreateIoCompletionPort((HANDLE) newSocket, completionPort,
+		(ULONG_PTR)& acceptState, 0) != completionPort) {
 		int err = WSAGetLastError();
-		std::cerr << "Error " << err << " in mySocket" << std::endl;
+		std::cerr << "Error " << err << " in socket" << std::endl;
 		exit(1);
 	}
 
@@ -72,19 +76,22 @@ void Server::createSocket() {
 
 	sin.sin_family = AF_INET;
 	sin.sin_addr.s_addr = htonl(receiveAddress);
-	sin.sin_port = htons(portNumber);
 
-	if (bind(mySocket, (SOCKADDR*) &sin, sizeof(sin)) == SOCKET_ERROR) {
+	// Clients have to connect to portNumber, servers to portNumber+1
+	sin.sin_port = htons(portNumber + createServerAcceptSocket);
+
+	if (bind(newSocket, (SOCKADDR*) &sin, sizeof(sin)) == SOCKET_ERROR) {
 		std::cerr << "Error in bind!" << std::endl;
 		exit(1);
 	}
 
-	if (listen(mySocket, 100) == SOCKET_ERROR) {
+	if (listen(newSocket, 100) == SOCKET_ERROR) {
 		std::cerr << "Error in listen!" << std::endl;
 		exit(1);
 	}
-	std::cout << "Started listening for connections on port " << portNumber
+	std::cout << "Started listening for connections on port " << portNumber + createServerAcceptSocket
 			<< std::endl;
+	return newSocket;
 }
 
 /*
@@ -159,12 +166,23 @@ void Server::onAcceptComplete(BOOL resultOk, DWORD length,
 		std::cout << "* new connection created" << std::endl;
 
 		// updates the context
-		setsockopt(socketState->socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
-				(char *) &mySocket, sizeof(mySocket));
+		//setsockopt(socketState->socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
+		//	(char *)(socketState->isServerAccepted ? mySocketServer : mySocketClient), sizeof(mySocketClient));
 
 		// associates new socket with completion port
-		newSocketState = createNewSocketState();
+		newSocketState = createNewSocketState(socketState->isServerAccepted);
 		newSocketState->socket = socketState->socket;
+
+		// deactivate nagle's algorithm
+		if (setsockopt(newSocketState->socket, IPPROTO_TCP, TCP_NODELAY,
+			(char *)&nodelay, sizeof(nodelay))
+			== SOCKET_ERROR) {
+			int err = WSAGetLastError();
+			std::cerr << "Error " << err << " in setsockopt TCP_NODELAY"
+				<< std::endl;
+			exit(1);
+		}
+		
 		if (CreateIoCompletionPort((HANDLE) newSocketState->socket,
 				completionPort, (ULONG_PTR) newSocketState.get() , 0)
 				!= completionPort) {
@@ -178,14 +196,14 @@ void Server::onAcceptComplete(BOOL resultOk, DWORD length,
 		asyncRead(newSocketState);
 
 		// starts waiting for another connection request
-		startAccepting();
+		startAccepting(socketState->isServerAccepted);
 	} else {
 		int err = GetLastError();
 		std::cerr << "Error (" << err << "," << length
 				<< ") in accept, cleaning up and retrying!!!" << std::endl;
 		closesocket(socketState->socket);
 		socketState->socket = 0;
-		startAccepting();
+		startAccepting(socketState->isServerAccepted);
 	}
 }
 
@@ -199,15 +217,6 @@ SOCKET Server::createAcceptingSocket() {
 		exit(1);
 	}
 
-	// deactivate nagle's algorithm
-	if (setsockopt(mySocket, IPPROTO_TCP, TCP_NODELAY,
-		(char *)&nodelay, sizeof(nodelay))
-		== SOCKET_ERROR) {
-		int err = WSAGetLastError();
-		std::cerr << "Error " << err << " in setsockopt TCP_NODELAY"
-			<< std::endl;
-		exit(1);
-	}
 	return acceptor;
 }
 
@@ -222,7 +231,7 @@ void Server::closeConnection(SocketState_ptr socketState) {
 		
 		std::unique_lock<std::mutex> lock(clientsMutex);
 		clients.erase(socketState);
-
+		servers.erase(socketState);
 		// The socket will be closed in the SocketState destructor
 	}
 }
@@ -255,20 +264,34 @@ BOOL Server::getCompletionStatus(DWORD* length, SocketState_ptr* socketState,
 void Server::loadAcceptEx() {
 	DWORD dwBytes;
 
-	WSAIoctl(mySocket, SIO_GET_EXTENSION_FUNCTION_POINTER, &GuidAcceptEx,
+	WSAIoctl(mySocketClient, SIO_GET_EXTENSION_FUNCTION_POINTER, &GuidAcceptEx,
 		sizeof(GuidAcceptEx), &pfAcceptEx, sizeof(pfAcceptEx), &dwBytes,
 		NULL,
 		NULL);
+
+	/*
+	WSAIoctl(mySocketServer, SIO_GET_EXTENSION_FUNCTION_POINTER, &GuidAcceptEx,
+		sizeof(GuidAcceptEx), &pfAcceptEx, sizeof(pfAcceptEx), &dwBytes,
+		NULL,
+		NULL);
+
+		*/
 }
 
 /*
  * Generate a new SocketState object
  */
-std::shared_ptr<SocketState> Server::createNewSocketState() {
+std::shared_ptr<SocketState> Server::createNewSocketState(bool createServerState) {
 	SocketState_ptr state(new SocketState());
 
 	std::unique_lock<std::mutex> lock(clientsMutex);
-	clients.insert(state);
+	if (createServerState){
+		servers.insert(state);
+	}
+	else {
+		clients.insert(state);
+	}
+	
 	return state;
 }
 
@@ -379,19 +402,21 @@ void Server::run() {
 /*
  * Starts accepting connections on mySocket
  */
-void Server::startAccepting() {
+void Server::startAccepting(bool acceptServer) {
 	SOCKET acceptor = createAcceptingSocket();
 	DWORD expected = sizeof(struct sockaddr_in) + 16;
 
 	std::cout << "Started accepting connections..." << std::endl;
 
 	// uses mySocket's completion key and overlapped structure
-	mySocketState.socket = acceptor;
+	AcceptState& socketState = acceptServer ? mySocketStateServer : mySocketStateClient;
+	socketState.socket = acceptor;
+
 	memset(&mySocketOverlapped, 0, sizeof(WSAOVERLAPPED));
 
 	// starts asynchronous accept
-	if (!pfAcceptEx(mySocket, acceptor, mySocketState.buf, 0 /* no recv */,
-			expected, expected, NULL, (WSAOVERLAPPED*) &mySocketOverlapped)) {
+	if (!pfAcceptEx(acceptServer?mySocketServer:mySocketClient, acceptor, socketState.buf, 0 /* no recv */,
+		expected, expected, NULL, (WSAOVERLAPPED*) &mySocketOverlapped)) {
 		int err = WSAGetLastError();
 		if (err != ERROR_IO_PENDING) {
 			std::cerr << "Error " << err << " in AcceptEx" << std::endl;

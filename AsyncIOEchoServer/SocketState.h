@@ -24,6 +24,7 @@ struct MessageHeader {
 struct AcceptState {
 	SOCKET socket;
 	char buf[100];
+	bool isServerAccepted;
 };
 
 class SocketState

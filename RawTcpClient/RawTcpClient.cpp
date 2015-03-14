@@ -138,7 +138,7 @@ void runRttTest(Client& client, int msgLen) {
 
 	float rtt = 1000*(endTime - start) / (float) msgNum;
 
-	cout << endl << "Average rtt for " << msgNum << " messages was " << rtt << "microseconds"
+	cout << endl << "Average rtt for " << msgNum << " messages was " << rtt << " microseconds"
 			<< endl;
 	client.setVerbosity(oldVerbose);
 }

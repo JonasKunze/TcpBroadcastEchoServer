@@ -28,7 +28,8 @@ private:
 	HANDLE completionPort;
 
 	// the socket for listening to new connections
-	SOCKET mySocket;
+	SOCKET mySocketClient;
+	SOCKET mySocketServer;
 
 	// my Socket port Number
 	const unsigned int portNumber;
@@ -40,7 +41,8 @@ private:
 	const unsigned long nodelay;
 
 	// Socket state used for connection establishements
-	AcceptState mySocketState;
+	AcceptState mySocketStateClient;
+	AcceptState mySocketStateServer;
 
 	// Overlapped object for connection purposes
 	WSAOVERLAPPED mySocketOverlapped;
@@ -49,9 +51,10 @@ private:
 	LPFN_ACCEPTEX pfAcceptEx;
 	GUID GuidAcceptEx;
 
-	// all connected clients
+	// all connected clients and servers
 	typedef std::shared_ptr<SocketState> SocketState_ptr;
 	std::set<SocketState_ptr> clients;
+	std::set<SocketState_ptr> servers;
 
 	// mutex for clients (used for disconnections)
 	std::mutex clientsMutex;
@@ -67,7 +70,7 @@ private:
 
 	void createIoCompletionPort();
 	 
-	void createSocket();
+	SOCKET createSocket(bool createServerAcceptSocket);
 
 	void asyncRead(SocketState_ptr socketState);
 
@@ -86,12 +89,12 @@ private:
 	 BOOL getCompletionStatus(DWORD* length, SocketState_ptr* socketState,
 		 WSAOVERLAPPED** ovl_res);
 	 void loadAcceptEx();
-	 SocketState_ptr createNewSocketState();
+	 SocketState_ptr createNewSocketState(bool createServerState);
 
 	 void onReadComplete(BOOL resultOk, DWORD length,
 		 SocketState_ptr socketState);
 
-	 void startAccepting();
+	 void startAccepting(bool acceptServer);
 
 	 void readThread(const int threadNum);
 
