@@ -50,7 +50,7 @@ private:
 	const std::vector<std::pair<std::string, unsigned int>> serverAddressesAndPorts;
 
 	int sock;
-	struct sockaddr_in sin;
+	
 	std::mutex connectionMutex;
 
 	const std::thread* receiverThread;

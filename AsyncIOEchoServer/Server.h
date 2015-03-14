@@ -56,6 +56,15 @@ private:
 	typedef std::shared_ptr<SocketState> SocketState_ptr;
 	std::set<SocketState_ptr> clients;
 
+	// connected server
+	SocketState_ptr connectedServer;
+
+	// Signaling for slave server disconnection
+	std::condition_variable slaveServerDisconnectedCondVar;
+	std::mutex slaveServerDisconnectedMutex;
+
+	std::thread slaveConnectionThread;
+
 	// mutex for clients (used for disconnections)
 	std::mutex clientsMutex;
 
@@ -99,6 +108,8 @@ private:
 	 void readThread(const int threadNum);
 
 	 void writeThread(const int threadNum);
+
+	 void connectSlaveServer();
 
 };
 

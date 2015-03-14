@@ -45,11 +45,9 @@ void runStormTest(Client& client, unsigned int msgLen, unsigned int msgNum, unsi
 			// wait for the start signal
 			{
 				std::unique_lock<std::mutex> lock(mutex);
-				if (!start){
-					condVar.wait(lock, [&]{
-						return start; 
-					});
-				}
+				condVar.wait(lock, [&]{
+					return start; 
+				});
 			}
 			for (int i = 0; i != msgNum / numberOfThreads; i++) {
 				data->messageNumber = i;

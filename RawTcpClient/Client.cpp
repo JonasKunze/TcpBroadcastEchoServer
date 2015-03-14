@@ -45,7 +45,7 @@ void Client::initWinsock() {
 
 	if (WSAStartup(0x202, &wsaData) == SOCKET_ERROR) {
 		int err = WSAGetLastError();
-		cerr << "Error " << err << "in WSAStartup" << endl;
+		cerr << "Error " << err << " in WSAStartup" << endl;
 		exit(1);
 	}
 }
@@ -57,7 +57,7 @@ void Client::createSocket() {
 	sock = socket(AF_INET, SOCK_STREAM, 0);
 	if (sock < 0) {
 		int err = WSAGetLastError();
-		printf("* error %d creating socket\n", err);
+		cerr << "Error " << err << " creating socket" << endl;
 		exit(1);
 	}
 
@@ -102,6 +102,7 @@ void Client::doConnect() {
 
 	// Trying all servers in an infinite loop starting with any random server
 	for (unsigned int serverID = rand();; serverID++) {
+		struct sockaddr_in sin;
 		sin.sin_family = AF_INET;
 
 		auto& addressAndPort = serverAddressesAndPorts[serverID

@@ -17,44 +17,12 @@ GuidAcceptEx(WSAID_ACCEPTEX), mySocketState(), portNumber(
 portNumber), receiveAddress(receiveAddress), otherServerAddressesAndPorts(otherServerAddressesAndPorts), nodelay(nodelay) {
 	initWinsock();
 	createIoCompletionPort();
-	mySocket = createSocket();
+	mySocket = createClientSocket();
 	loadAcceptEx();
-	startAccepting();
+	
+	slaveConnectionThread = std::thread(&Server::connectSlaveServer, this);
 
-	for (auto& server : otherServerAddressesAndPorts) {
-		std::cout << "Trying to connect to server " << server.first.c_str() << ":" << server.second << std::endl;
-		SOCKET sock = createSocket();
-
-		SOCKADDR saAddr;
-		DWORD dwSOCKADDRLen = sizeof(saAddr);
-
-		USES_CONVERSION;
-		BOOL fConnect = WSAConnectByName(sock, A2W(server.first.c_str()),
-			A2W(std::to_string(server.second).c_str()), &dwSOCKADDRLen, &saAddr, NULL, NULL, NULL, NULL);
-
-		if (!fConnect) {
-			std::cerr << "Unable to connect to Server " << server.first.c_str() << "!" << std::endl;
-			continue;
-		}
-
-		// FIXME: Redundant code with onAcceptComplete
-		SocketState_ptr socketState = createNewSocketState();
-		socketState->socket = sock;
-
-		
-		if (CreateIoCompletionPort((HANDLE)socketState->socket,
-			completionPort, (ULONG_PTR)socketState.get(), 0)
-			!= completionPort) {
-			int err = WSAGetLastError();
-			std::cerr << "Error " << err << " in CreateIoCompletionPort"
-				<< std::endl;
-			exit(1);
-		}
-
-		// starts receiving from the new connection
-		asyncRead(socketState);
-		
-	}
+	startAccepting();	
 }
 
 Server::~Server() {
@@ -73,6 +41,51 @@ void Server::initWinsock() {
 	}
 }
 
+/*
+ Connects to the first server in the list of servers
+ */
+void Server::connectSlaveServer(){
+	while (true){
+		for (auto& server : otherServerAddressesAndPorts) {
+			std::cout << "Trying to connect to server " << server.first.c_str() << ":" << server.second << std::endl;
+			SOCKET sock = createSocket();
+
+			SOCKADDR saAddr;
+			DWORD dwSOCKADDRLen = sizeof(saAddr);
+
+			USES_CONVERSION;
+			BOOL fConnect = WSAConnectByName(sock, A2W(server.first.c_str()),
+				A2W(std::to_string(server.second).c_str()), &dwSOCKADDRLen, &saAddr, NULL, NULL, NULL, NULL);
+
+			if (!fConnect) {
+				std::cerr << "Unable to connect to Server " << server.first.c_str() << ":" << server.second << std::endl;
+				continue;
+			}
+
+			// FIXME: Redundant code with onAcceptComplete
+			connectedServer = createNewSocketState();
+			connectedServer->socket = sock;
+
+
+			if (CreateIoCompletionPort((HANDLE)connectedServer->socket,
+				completionPort, (ULONG_PTR)connectedServer.get(), 0)
+				!= completionPort) {
+				int err = WSAGetLastError();
+				std::cerr << "Error " << err << " in CreateIoCompletionPort"
+					<< std::endl;
+				exit(1);
+			}
+
+			// starts receiving from the new connection
+			asyncRead(connectedServer);
+			break;
+		}
+		std::unique_lock<std::mutex> lock(slaveServerDisconnectedMutex);
+		slaveServerDisconnectedCondVar.wait(lock, [this]{
+			return !connectedServer; // wake up if the server is not set any more
+		});
+	}
+}
 /*
  * Initializes the instance variable completionPort with a new completion port
  */
@@ -199,7 +212,7 @@ void Server::onAcceptComplete(BOOL resultOk, DWORD length,
 
 		// updates the context
 		setsockopt(socketState->socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
-			(char *)mySocket, sizeof(mySocket));
+			(char *)&mySocket, sizeof(mySocket));
 
 		// associates new socket with completion port
 		newSocketState = createNewSocketState();
@@ -258,6 +271,12 @@ SOCKET Server::createSocket() {
 void Server::closeConnection(SocketState_ptr socketState) {
 	//std::unique_lock<std::mutex> lock(socketState->closeMutex);
 	if (!socketState->toBeClosed && socketState->pendingOperations <= 0) {
+		if (socketState == connectedServer){
+			// connect to the next server
+			connectedServer.reset();
+			slaveServerDisconnectedCondVar.notify_all();
+		}
+
 		std::cout << "Closing connection " << socketState->socket << std::endl;
 		socketState->toBeClosed = true;
 		
