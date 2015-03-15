@@ -4,7 +4,7 @@ My first windows application: A simple TCP server broadcasting messages to all c
 ## Concept
 A client is run with a list of available servers. It will connect to any (but only one) random server out of this list and any time the connection get's closed it will try all configured servers until it manages to connect to any (**automatic reconnection**).
 
-A client can send messages to the connected server. A message currently has a 8 Byte header with 4 Byte for the message length and 4 Byte for a message number (mainly for debugging purposes). Messages received by a server this way are distributed to all clients and servers connected to this server (Broadcast).
+A client can send messages to the connected server. A message currently has a **8 Byte header** with 4 Byte for the message length and 4 Byte for a message number (mainly for debugging purposes). Messages received by a server this way are distributed to all clients and servers connected to this server (**Broadcast**).
 
 If a server is running without the "--noecho" flag it will send messages back to the source of the message if it is a client. This can be used to run round trip time measurements.
 
