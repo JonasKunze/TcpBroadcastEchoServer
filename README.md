@@ -8,6 +8,5 @@ A client can send messages to the connected server. A message currently has a 8 
 
 If a server is running without the "--noecho" flag it will send messages back to the source of the message if it is a client. This can be used to run round trip time measurements.
 
-## Topology
-If client C1 connects to Server S1 and Client C2 to Server S2 messages coming from C1 should also be received by C2. 
-This is achieved by a fully connected mesh topology between the servers meaning that every server connects to every other server. In the example above the message would be routed the following path: C1 -> S1 -> S2 -> C2 
+## More detailed descriptions
+Please see the wiki of this project: https://github.com/JonasKunze/TcpBroadcastEchoServer/wiki
