@@ -17,10 +17,16 @@
 Server::Server(unsigned int portNumber, unsigned long receiveAddress,
 		bool nodelay,
 		std::set<std::pair<std::string, unsigned int>> otherServerAddressesAndPorts,
-		bool noecho) :
+		bool noecho, unsigned int sendThreadNum, unsigned int receiveTheadNum) : sendThreadNum(sendThreadNum), receiveTheadNum(receiveTheadNum),
 		GuidAcceptEx(WSAID_ACCEPTEX), clientAcceptor(false), serverAcceptor(
 				true), portNumber(portNumber), receiveAddress(receiveAddress), disconnectedServerAddressesAndPorts(
 				otherServerAddressesAndPorts), nodelay(nodelay), noecho(noecho) {
+	
+
+	
+	readJobs = new ThreadsafeProducerConsumerQueue<SocketState_ptr>[sendThreadNum];
+	writeJobs = new ThreadsafeProducerConsumerQueue<std::function<void()>>[receiveTheadNum];
+
 	initWinsock();
 	createIoCompletionPort();
 	clientAcceptorSocket = createAcceptorSocket(portNumber, clientAcceptor);
@@ -34,6 +40,12 @@ Server::Server(unsigned int portNumber, unsigned long receiveAddress,
 }
 
 Server::~Server() {
+	delete[] readJobs;
+	delete[] writeJobs;
+
+	for (auto& client : clients) {
+		closeConnection(client);
+	}
 }
 
 /*
@@ -160,6 +172,10 @@ SOCKET Server::createAcceptorSocket(unsigned int portNumber,
  * Starts reading from the given socket
  */
 void Server::asyncRead(SocketState_ptr socketState) {
+	if (socketState->toBeClosed){
+		return;
+	}
+
 	DWORD flags = 0;
 	socketState->pendingOperations++;
 	if (WSARecv(socketState->socket, socketState->getWritableBuff(), 1, NULL,
@@ -189,7 +205,7 @@ void Server::asyncBroadcast(SocketState_ptr messageSourceState) {
 			// Also don't send the message to other servers if it comes from another server (prevent loops)
 			if ((noecho && client == messageSourceState)
 					|| (messageSourceState->isAnotherServer
-							&& client->isAnotherServer)) {
+					&& client->isAnotherServer) || client->toBeClosed) {
 				continue;
 			}
 			client->pendingOperations++;
@@ -375,7 +391,7 @@ void Server::onReadComplete(BOOL resultOk, DWORD length,
 			socketState->writeFinished();
 
 			// enqueue a new read read task and 
-			readJobs[socketState->socket % WRITE_THREAD_NUM].push(
+			readJobs[socketState->socket % sendThreadNum].push(
 					std::move(socketState));
 			asyncBroadcast(socketState);
 		} else // length == 0
@@ -421,10 +437,10 @@ void Server::writeThread(const int threadNum) {
 void Server::run() {
 	// Spawn read and write thread pools
 	std::vector<std::thread> threadPool;
-	for (int i = 0; i < READ_THREAD_NUM; i++) {
+	for (unsigned int i = 0; i != sendThreadNum; i++) {
 		threadPool.push_back(std::move(std::thread(&Server::readThread, this, i)));
 	}
-	for (int i = 0; i < WRITE_THREAD_NUM; i++) {
+	for (unsigned i = 0; i != receiveTheadNum; i++) {
 		threadPool.push_back(std::move(std::thread(&Server::writeThread, this, i)));
 	}
 
@@ -437,9 +453,14 @@ void Server::run() {
 		resultOk = getCompletionStatus(&length, &socketState, &ovl_res);
 		socketState->pendingOperations--;
 
+		if (socketState->toBeClosed){
+			closeConnection(socketState);
+			continue;
+		}
+
 		if (ovl_res == socketState->receiveOverlapped) {
 			//onReadComplete(resultOk, length, socketState);
-			writeJobs[socketState->socket % WRITE_THREAD_NUM].push(
+			writeJobs[socketState->socket % receiveTheadNum].push(
 					std::move (
 						std::function < void() > ([=]() {
 							onReadComplete(resultOk, length, socketState);

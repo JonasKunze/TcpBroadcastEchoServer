@@ -15,21 +15,22 @@
 #include "SocketState.h"
 #include "ThreadSafeProducerConsumerQueue.h"
 
-#define WRITE_THREAD_NUM 2
-#define READ_THREAD_NUM 2
-
 typedef std::shared_ptr<SocketState> SocketState_ptr;
 typedef std::pair<std::string, unsigned int> ServerAddress;
 
 class Server
 {
 public:
-	Server(unsigned int portNumber, unsigned long receiveAddress, bool nodelay, std::set<ServerAddress> otherServerAddressesAndPorts, bool noecho);
+	Server(unsigned int portNumber, unsigned long receiveAddress, bool nodelay, std::set<ServerAddress> otherServerAddressesAndPorts, 
+		bool noecho, unsigned int sendThreadNum, unsigned int receiveTheadNum);
 	virtual ~Server();
 
 	void run();
 
 private:
+	const unsigned int receiveTheadNum;
+	const unsigned int sendThreadNum;
+
 	// the completion port
 	HANDLE completionPort;
 
@@ -77,11 +78,11 @@ private:
 	std::mutex clientsMutex;
 
 	// Queues for write jobs (broadcasts). One queue per thread
-	ThreadsafeProducerConsumerQueue<std::function<void()>> writeJobs[WRITE_THREAD_NUM];
+	ThreadsafeProducerConsumerQueue<std::function<void()>>* writeJobs;
 	int writeJobRoundRobin;
 	
 	// Queue for read jobs (incoming messages)
-	ThreadsafeProducerConsumerQueue<SocketState_ptr> readJobs[READ_THREAD_NUM];
+	ThreadsafeProducerConsumerQueue<SocketState_ptr>* readJobs;
 
 	void initWinsock();
 

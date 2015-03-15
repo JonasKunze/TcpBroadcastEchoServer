@@ -11,5 +11,7 @@ public:
 	static std::set<std::pair<std::string, unsigned int>> servers;
 	static bool nodelay;
 	static bool noEcho;
+	static unsigned int receiveThreadNum;
+	static unsigned int sendThreadNum;
 };
 
