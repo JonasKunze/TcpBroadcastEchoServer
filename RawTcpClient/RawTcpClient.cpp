@@ -25,12 +25,7 @@ void runStormTest(Client& client, unsigned int msgLen, unsigned int msgNum, unsi
 	cout << "Sending data storm with " << msgNum << " messages of " << msgLen
 			<< " B each" << endl;
 
-	cout << "Please make sure that the connected server is running without --noEcho and press return to start the test!" << endl;
-	string dummy;
-	getline(std::cin, dummy);
-
-	const unsigned int lastMessageNumber = client.numberOfMessagesReceived
-			+ msgNum;
+	const unsigned int startMessageNumber = client.numberOfMessagesReceived;
 
 	// mute the client
 	bool oldVerbose = client.getVerbosity();
@@ -42,11 +37,18 @@ void runStormTest(Client& client, unsigned int msgLen, unsigned int msgNum, unsi
 	std::condition_variable condVar;
 	std::mutex mutex;
 
-	int numberOfThreads = 1;
 	bool start = false;
 	std::vector<std::thread> threadPool;
-	for (int i = 0; i != numberOfThreads; i++){
-		threadPool.push_back(std::thread([&](){
+	for (int i = 0; i != threadNum; i++){
+		threadPool.push_back(std::thread([&, i](){
+			unsigned int numberOfMessagesToBeSent = msgNum / threadNum;
+			// Make sure that really msgNum messages are sent
+			if (i == 0){
+				numberOfMessagesToBeSent += msgNum % threadNum;
+			}
+
+			cout << "Thread " << i << " will send " << numberOfMessagesToBeSent << endl;
+
 			// wait for the start signal
 			{
 				std::unique_lock<std::mutex> lock(mutex);
@@ -54,13 +56,16 @@ void runStormTest(Client& client, unsigned int msgLen, unsigned int msgNum, unsi
 					return start; 
 				});
 			}
-			for (int i = 0; i != msgNum / numberOfThreads; i++) {
+			for (int i = 0; i != numberOfMessagesToBeSent; i++) {
 				data->messageNumber = i;
 				client.sendMessage(data);
 			}
 		}));	
 	}
 	
+	// Wait for all threads to be spawned
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
 	// send start signal
 	start = true;
 	condVar.notify_all();
@@ -79,13 +84,23 @@ void runStormTest(Client& client, unsigned int msgLen, unsigned int msgNum, unsi
 	if (time == 0) {
 		time = 1;
 	}
+
+	if (time < 1000) {
+		cout << "WARNING: sending took less than 1000 ms! Please retry with a larger message number value to get more accurate results." << endl;
+	}
+
+
 	long long datarate = (msgNum * msgLen) / time;
 	long long msgrate = datarate * 1000 / msgLen;
 
-	// Wait until all responses have been received
-	while (client.numberOfMessagesReceived < lastMessageNumber) {
-		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	// Wait until all responses have been received if the server is running without --noecho
+	std::this_thread::sleep_for(std::chrono::milliseconds(100)); // wait until a few messages should have been received	
+	if (client.numberOfMessagesReceived>startMessageNumber /*Server is running without --noecho*/){
+		while (client.numberOfMessagesReceived < startMessageNumber + msgNum) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		}
 	}
+	
 
 	cout << endl << "Sent " << msgNum << " messages within " << time << " ms ("
 			<< datarate << " kB/s, " << msgrate << " messages/s)" << endl;
@@ -100,7 +115,7 @@ void runStormTest(Client& client, unsigned int msgLen, unsigned int msgNum, unsi
  */
 void runRttTest(Client& client, int msgLen) {
 	if (msgLen < sizeof(MessageHeader) + 1) {
-		cout << "msgLen must be at least " << sizeof(MessageHeader) + 1 << endl;
+		cout << "msgLen must be at least " << sizeof(MessageHeader) + 1 << " because the header itself takes " << sizeof(MessageHeader) << " B"<< endl;
 		return;
 	}
 	cout << "Measuring round trip time with messages of " << msgLen << " B each"
@@ -117,7 +132,7 @@ void runRttTest(Client& client, int msgLen) {
 	MessageHeader* data = reinterpret_cast<MessageHeader*>(new char[msgLen]);
 	data->messageLength = msgLen;
 
-	const unsigned int msgNum = 1000;
+	const unsigned int msgNum = 10000;
 	const unsigned int lastMessageNumber = client.numberOfMessagesReceived
 			+ msgNum;
 	long long endTime = 0;

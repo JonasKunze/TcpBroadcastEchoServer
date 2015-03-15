@@ -1,6 +1,7 @@
 #include "Options.h"
 
 #include <iostream>
+#include <cstring>
 
 using namespace std;
 
@@ -8,6 +9,9 @@ unsigned int Options::portNumber=1234;
 std::set<std::pair<std::string, unsigned int>> Options::servers;
 bool Options::nodelay = false;
 bool Options::noEcho = false;
+unsigned int Options::receiveThreadNum = 2;
+unsigned int Options::sendThreadNum = 2;
+
 
 /*
  * Retrieves all options from the given arguments
@@ -41,12 +45,35 @@ void Options::initialize(int argc, char *argv[]) {
 			continue;
 		}
 
+		if (strncmp(argv[i], "--receiveThreads=", strlen("--receiveThreads=")) == 0) {
+			if (sscanf_s(argv[i], "--receiveThreads=%d", &receiveThreadNum) != 1) {
+				cerr << "Bad option format (integer expected after '='): " << argv[i] << endl;
+				exit(1);
+			}
+			cout << "Setting number of receiver threads to " << receiveThreadNum << endl;
+			continue;
+		}		
+		
+		if (strncmp(argv[i], "--sendThreads=", strlen("--sendThreads=")) == 0) {
+			if (sscanf_s(argv[i], "--sendThreads=%d", &sendThreadNum) != 1) {
+				cerr << "Bad option format (integer expected after '='): " << argv[i] << endl;
+				exit(1);
+			}
+			cout << "Setting number of send threads to " << sendThreadNum << endl;
+			continue;
+		}
+
+
 		if (strcmp(argv[i], "--help") == 0) {
 			cout << "Usage: "<< argv[0] << "<portNumber> <parameters> slaveServer1:port1 slaveServer2:port2..." << endl;
-			cout << "Clients must connect to <portNumber>. Received messages are broadcasted to all connected clients and the first server available in the given slave server list." << endl;
+			cout << "This will open port <portNumber> and connect to <slaveServer1> on port <port1>. If <slaveServer1> is started with port <p1> " 
+				<< "your should connect to that port number plus as in port1=p1+1!" << endl;
+			cout << "Clients must connect to <portNumber>. Received messages are broadcasted to all connected clients servers." << endl;
 			cout << "Following parameters are allowed:" << endl;
 			cout << "\t--nodelay:\t switches off Nagle's algorithm" << endl;
 			cout << "\t--noecho:\t Messages will not be sent back to the client the message comes from" << endl;
+			cout << "\t--receiveThreads=N:\t Spawns N threads to handle received messages" << endl;
+			cout << "\t--sendThreads:\t Spawns N threads sending messages" << endl;
 			exit(0);
 		}
 

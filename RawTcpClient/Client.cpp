@@ -100,7 +100,7 @@ void Client::reconnect() {
 void Client::doConnect() {
 
 	// Trying all servers in an infinite loop starting with any random server
-	for (unsigned int serverID = rand();; serverID++) {
+	for (unsigned int serverID = rand(); /*don't stop until we connected*/; serverID++) {
 		struct sockaddr_in sin;
 		sin.sin_family = AF_INET;
 
