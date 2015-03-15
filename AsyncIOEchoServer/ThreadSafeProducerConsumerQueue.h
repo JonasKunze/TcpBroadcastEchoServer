@@ -51,11 +51,13 @@ public:
 	*/
 	bool push(T&& element) {
 		const uint32_t nextElement = (writePos_ + 1) % Size_;
-		
-		std::unique_lock<std::mutex> lock(readMutex);
-		readCondVar.wait(lock, [this, nextElement]{
-			return (readPos_ != nextElement);
-		});
+
+		if (readPos_ == nextElement) { // Sleep if the queue is full
+			std::unique_lock<std::mutex> lock(readMutex);
+			readCondVar.wait(lock, [this, nextElement]{
+				return (readPos_ != nextElement);
+			});
+		}
 		/*
 		while (readPos_ == nextElement) {
 			std::this_thread::sleep_for(std::chrono::microseconds(1));
@@ -71,14 +73,17 @@ public:
 	* remove the oldest element from the circular queue. May only be called by one single thread (consumer)!
 	*/
 	void pop(T& element) {
-		
-		// Workaround: Sometimes we receive a notification even though the pointer did not change yet. 'volatile' 
-		// seems not to be enough on Windows -> set a timeout
-		std::unique_lock<std::mutex> lock(writeMutex);
-		while (readPos_ == writePos_) {
-			//std::this_thread::sleep_for(std::chrono::microseconds(1));
-			writeCondVar.wait_for(lock, std::chrono::microseconds(10));
-		}		
+				
+		if (readPos_ == writePos_) { // sleep if the queue is empty
+			std::unique_lock<std::mutex> lock(writeMutex);
+			while (readPos_ == writePos_) {
+				//std::this_thread::sleep_for(std::chrono::microseconds(1));
+
+				// Workaround: Sometimes we receive a notification even though the pointer did not change yet. 'volatile' 
+				// seems not to be enough on Windows -> set a timeout
+				writeCondVar.wait_for(lock, std::chrono::microseconds(10));
+			}
+		}
 
 		const uint32_t nextElement = (readPos_ + 1) % Size_;
 

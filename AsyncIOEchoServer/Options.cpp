@@ -66,7 +66,9 @@ void Options::initialize(int argc, char *argv[]) {
 
 		if (strcmp(argv[i], "--help") == 0) {
 			cout << "Usage: "<< argv[0] << "<portNumber> <parameters> slaveServer1:port1 slaveServer2:port2..." << endl;
-			cout << "Clients must connect to <portNumber>. Received messages are broadcasted to all connected clients and the first server available in the given slave server list." << endl;
+			cout << "This will open port <portNumber> and connect to <slaveServer1> on port <port1>. If <slaveServer1> is started with port <p1> " 
+				<< "your should connect to that port number plus as in port1=p1+1!" << endl;
+			cout << "Clients must connect to <portNumber>. Received messages are broadcasted to all connected clients servers." << endl;
 			cout << "Following parameters are allowed:" << endl;
 			cout << "\t--nodelay:\t switches off Nagle's algorithm" << endl;
 			cout << "\t--noecho:\t Messages will not be sent back to the client the message comes from" << endl;
