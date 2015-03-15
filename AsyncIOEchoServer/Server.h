@@ -34,8 +34,8 @@ private:
 	HANDLE completionPort;
 
 	// the socket for listening to new connections
-	SOCKET mySocketClient;
-	SOCKET mySocketServer;
+	SOCKET clientAcceptorSocket;
+	SOCKET serverAcceptorSocket;
 
 	// my Socket port Number
 	const unsigned int portNumber;
@@ -80,14 +80,14 @@ private:
 	ThreadsafeProducerConsumerQueue<std::function<void()>> writeJobs[WRITE_THREAD_NUM];
 	int writeJobRoundRobin;
 	
-	// Qeueu for read jobs (incoming messages)
+	// Queue for read jobs (incoming messages)
 	ThreadsafeProducerConsumerQueue<SocketState_ptr> readJobs[READ_THREAD_NUM];
 
 	void initWinsock();
 
 	void createIoCompletionPort();
 	 
-	SOCKET createClientSocket(unsigned int portNumber, AcceptState& acceptor);
+	SOCKET createAcceptorSocket(unsigned int portNumber, AcceptState& acceptor);
 
 	void asyncRead(SocketState_ptr socketState);
 

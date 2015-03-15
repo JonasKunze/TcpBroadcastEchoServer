@@ -62,12 +62,11 @@ void Client::createSocket() {
 	}
 
 	// deactivate nagle's algorithm
-	if (setsockopt(sock, IPPROTO_TCP, TCP_NODELAY,
-		(char *)&nodelay, sizeof(nodelay))
-		== SOCKET_ERROR) {
+	if (setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char *) &nodelay,
+			sizeof(nodelay)) == SOCKET_ERROR) {
 		int err = WSAGetLastError();
 		std::cerr << "Error " << err << " in setsockopt TCP_NODELAY"
-			<< std::endl;
+				<< std::endl;
 		exit(1);
 	}
 }
