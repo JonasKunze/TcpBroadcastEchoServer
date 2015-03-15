@@ -7,6 +7,7 @@
 #include <atomic>
 #include <mutex>
 #include <thread>
+#include <map>
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -16,10 +17,14 @@
 
 #define WRITE_THREAD_NUM 2
 #define READ_THREAD_NUM 2
+
+typedef std::shared_ptr<SocketState> SocketState_ptr;
+typedef std::pair<std::string, unsigned int> ServerAddress;
+
 class Server
 {
 public:
-	Server(unsigned int portNumber, unsigned long receiveAddress, bool nodelay, std::vector<std::pair<std::string, unsigned int>> otherServerAddressesAndPorts, bool noecho);
+	Server(unsigned int portNumber, unsigned long receiveAddress, bool nodelay, std::set<ServerAddress> otherServerAddressesAndPorts, bool noecho);
 	virtual ~Server();
 
 	void run();
@@ -29,7 +34,8 @@ private:
 	HANDLE completionPort;
 
 	// the socket for listening to new connections
-	SOCKET mySocket;
+	SOCKET mySocketClient;
+	SOCKET mySocketServer;
 
 	// my Socket port Number
 	const unsigned int portNumber;
@@ -44,10 +50,12 @@ private:
 	// This must be true if the server connects to other slave server to avoid infinite loops
 	const bool noecho;
 
-	const std::vector<std::pair<std::string, unsigned int>> otherServerAddressesAndPorts;
+	std::map<SocketState_ptr, ServerAddress> connectedServerAddressesAndPorts;
+	std::set<ServerAddress> disconnectedServerAddressesAndPorts;
 
 	// Socket state used for connection establishements
-	AcceptState mySocketState;
+	AcceptState clientAcceptor;
+	AcceptState serverAcceptor;
 
 	// Overlapped object for connection purposes
 	WSAOVERLAPPED mySocketOverlapped;
@@ -57,12 +65,8 @@ private:
 	GUID GuidAcceptEx;
 
 	// all connected clients and servers
-	typedef std::shared_ptr<SocketState> SocketState_ptr;
 	std::set<SocketState_ptr> clients;
-
-	// connected server
-	SocketState_ptr connectedServer;
-
+	
 	// Signaling for slave server disconnection
 	std::condition_variable slaveServerDisconnectedCondVar;
 	std::mutex slaveServerDisconnectedMutex;
@@ -83,7 +87,7 @@ private:
 
 	void createIoCompletionPort();
 	 
-	SOCKET createClientSocket();
+	SOCKET createClientSocket(unsigned int portNumber, AcceptState& acceptor);
 
 	void asyncRead(SocketState_ptr socketState);
 
@@ -107,7 +111,7 @@ private:
 	 void onReadComplete(BOOL resultOk, DWORD length,
 		 SocketState_ptr socketState);
 
-	 void startAccepting();
+	 void startAccepting(AcceptState* socketState, SOCKET socket);
 
 	 void readThread(const int threadNum);
 

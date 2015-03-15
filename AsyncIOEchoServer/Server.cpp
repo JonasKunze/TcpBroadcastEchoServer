@@ -12,17 +12,19 @@
  * receiveAddres: defines the address/network device to which should be listened. Use INADDR_ANY to listen to any device
  * nodelay: if set to true the nagle's algorithm will be switched off
  */
-Server::Server(unsigned int portNumber, unsigned long receiveAddress, bool nodelay, std::vector<std::pair<std::string, unsigned int>> otherServerAddressesAndPorts, bool noecho) :
-GuidAcceptEx(WSAID_ACCEPTEX), mySocketState(), portNumber(
-portNumber), receiveAddress(receiveAddress), otherServerAddressesAndPorts(otherServerAddressesAndPorts), nodelay(nodelay), noecho(noecho){
+Server::Server(unsigned int portNumber, unsigned long receiveAddress, bool nodelay, std::set<std::pair<std::string, unsigned int>> otherServerAddressesAndPorts, bool noecho) :
+GuidAcceptEx(WSAID_ACCEPTEX), clientAcceptor(false), serverAcceptor(true), portNumber(
+portNumber), receiveAddress(receiveAddress), disconnectedServerAddressesAndPorts(otherServerAddressesAndPorts), nodelay(nodelay), noecho(noecho){
 	initWinsock();
 	createIoCompletionPort();
-	mySocket = createClientSocket();
+	mySocketClient = createClientSocket(portNumber, clientAcceptor);
+	mySocketServer = createClientSocket(portNumber + 1, serverAcceptor);
 	loadAcceptEx();
 	
 	slaveConnectionThread = std::thread(&Server::connectSlaveServer, this);
 
-	startAccepting();	
+	startAccepting(&clientAcceptor, mySocketClient);
+	startAccepting(&serverAcceptor, mySocketServer);
 }
 
 Server::~Server() {
@@ -45,8 +47,9 @@ void Server::initWinsock() {
  Connects to the first server in the list of servers
  */
 void Server::connectSlaveServer(){
-	while (true){
-		for (auto& server : otherServerAddressesAndPorts) {
+	while (true) {
+		std::vector<ServerAddress> newConnections;
+		for (auto& server : disconnectedServerAddressesAndPorts) {
 			std::cout << "Trying to connect to server " << server.first.c_str() << ":" << server.second << std::endl;
 			SOCKET sock = createSocket();
 
@@ -63,9 +66,9 @@ void Server::connectSlaveServer(){
 			}
 
 			// FIXME: Redundant code with onAcceptComplete
-			connectedServer = createNewSocketState();
+			SocketState_ptr connectedServer = createNewSocketState();
 			connectedServer->socket = sock;
-
+			connectedServer->isAnotherServer = true;
 
 			if (CreateIoCompletionPort((HANDLE)connectedServer->socket,
 				completionPort, (ULONG_PTR)connectedServer.get(), 0)
@@ -78,11 +81,17 @@ void Server::connectSlaveServer(){
 
 			// starts receiving from the new connection
 			asyncRead(connectedServer);
-			break;
+
+			connectedServerAddressesAndPorts[connectedServer] = server;
+			newConnections.push_back(std::move(server));
 		}
+		for (auto& server : newConnections){
+			disconnectedServerAddressesAndPorts.erase(server);
+		}
+
 		std::unique_lock<std::mutex> lock(slaveServerDisconnectedMutex);
 		slaveServerDisconnectedCondVar.wait(lock, [this]{
-			return !connectedServer; // wake up if the server is not set any more
+			return !disconnectedServerAddressesAndPorts.empty(); // wake up if any server is disconnected
 		});
 	}
 }
@@ -102,13 +111,13 @@ void Server::createIoCompletionPort() {
 /*
  * Initializes the instance variable mySocket with a new TCP/IP socket
  */
-SOCKET Server::createClientSocket() {
+SOCKET Server::createClientSocket(unsigned int portNumber, AcceptState& acceptor) {
 	SOCKET newSocket = createSocket();
 
-	mySocketState.socket = -1;
+	acceptor.socket = -1;
 
 	if (CreateIoCompletionPort((HANDLE) newSocket, completionPort,
-		(ULONG_PTR)& mySocketState, 0) != completionPort) {
+		(ULONG_PTR)& acceptor, 0) != completionPort) {
 		int err = WSAGetLastError();
 		std::cerr << "Error " << err << " in socket" << std::endl;
 		exit(1);
@@ -164,8 +173,9 @@ void Server::asyncBroadcast(SocketState_ptr socketState) {
 
 		std::unique_lock<std::mutex> lock(clientsMutex);
 		for (auto& client : clients) {
-			// don't send back to the client the message comes from
-			if (noecho && client == socketState){
+			// don't send back to the client the messages comes from if noecho is set
+			// Also don't send the message to other servers if it comes from another server (prevent loops)
+			if ((noecho&& client == socketState) || (socketState->isAnotherServer && client->isAnotherServer)){
 				continue;
 			}
 			client->pendingOperations++;
@@ -203,20 +213,21 @@ void Server::onSendComplete(BOOL resultOk, DWORD length,
  * A new accept operation will also be initiated
  */
 void Server::onAcceptComplete(BOOL resultOk, DWORD length,
-		AcceptState* socketState) {
+		AcceptState* acceptor) {
 
 	SocketState_ptr newSocketState;
 
 	if (resultOk) {
-		std::cout << "New connection created" << std::endl;
+		std::cout << "New "<< (acceptor->isServerAcceptor?"Server":"Client") << " connected"  << std::endl;
 
 		// updates the context
-		setsockopt(socketState->socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
-			(char *)&mySocket, sizeof(mySocket));
+		setsockopt(acceptor->socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
+			(char *)&mySocketClient, sizeof(mySocketClient));
 
 		// associates new socket with completion port
 		newSocketState = createNewSocketState();
-		newSocketState->socket = socketState->socket;
+		newSocketState->socket = acceptor->socket;
+		newSocketState->isAnotherServer = acceptor->isServerAcceptor;
 
 		// deactivate nagle's algorithm
 		if (setsockopt(newSocketState->socket, IPPROTO_TCP, TCP_NODELAY,
@@ -240,15 +251,20 @@ void Server::onAcceptComplete(BOOL resultOk, DWORD length,
 		// starts receiving from the new connection
 		asyncRead(newSocketState);
 
-		// starts waiting for another connection request
-		startAccepting();
+
 	} else {
 		int err = GetLastError();
 		std::cerr << "Error (" << err << "," << length
 				<< ") in accept, cleaning up and retrying!!!" << std::endl;
-		closesocket(socketState->socket);
-		socketState->socket = 0;
-		startAccepting();
+		closesocket(acceptor->socket);
+		acceptor->socket = 0;
+	}
+	// starts waiting for another connection request
+	if (acceptor->isServerAcceptor){
+		startAccepting(&serverAcceptor, mySocketServer);
+	}
+	else {
+		startAccepting(&clientAcceptor, mySocketClient);
 	}
 }
 
@@ -270,9 +286,10 @@ SOCKET Server::createSocket() {
 void Server::closeConnection(SocketState_ptr socketState) {
 	//std::unique_lock<std::mutex> lock(socketState->closeMutex);
 	if (!socketState->toBeClosed && socketState->pendingOperations <= 0) {
-		if (socketState == connectedServer){
+		if (connectedServerAddressesAndPorts.count(socketState)>0){
 			// connect to the next server
-			connectedServer.reset();
+			disconnectedServerAddressesAndPorts.insert(connectedServerAddressesAndPorts[socketState]);
+			connectedServerAddressesAndPorts.erase(socketState);
 			slaveServerDisconnectedCondVar.notify_all();
 		}
 
@@ -313,7 +330,7 @@ BOOL Server::getCompletionStatus(DWORD* length, SocketState_ptr* socketState,
 void Server::loadAcceptEx() {
 	DWORD dwBytes;
 
-	WSAIoctl(mySocket, SIO_GET_EXTENSION_FUNCTION_POINTER, &GuidAcceptEx,
+	WSAIoctl(mySocketClient, SIO_GET_EXTENSION_FUNCTION_POINTER, &GuidAcceptEx,
 		sizeof(GuidAcceptEx), &pfAcceptEx, sizeof(pfAcceptEx), &dwBytes,
 		NULL,
 		NULL);
@@ -424,7 +441,6 @@ void Server::run() {
 			onSendComplete(resultOk, length, socketState);
 		}
 		else if (socketState->sendOverlapped == nullptr) {
-			std::cout << "New connection accepted" << std::endl;
 			onAcceptComplete(resultOk, length,
 				reinterpret_cast<AcceptState*>(socketState.get()));
 		}
@@ -439,19 +455,19 @@ void Server::run() {
 /*
  * Starts accepting connections on mySocket
  */
-void Server::startAccepting() {
+void Server::startAccepting(AcceptState* socketState, SOCKET socket) {
 	SOCKET acceptor = createSocket();
 	DWORD expected = sizeof(struct sockaddr_in) + 16;
 
 	std::cout << "Started accepting connections..." << std::endl;
 
 	// uses mySocket's completion key and overlapped structure
-	mySocketState.socket = acceptor;
+	socketState->socket = acceptor;
 
 	memset(&mySocketOverlapped, 0, sizeof(WSAOVERLAPPED));
 
 	// starts asynchronous accept
-	if (!pfAcceptEx(mySocket, acceptor, mySocketState.buf, 0 /* no recv */,
+	if (!pfAcceptEx(socket, acceptor, socketState->buf, 0 /* no recv */,
 		expected, expected, NULL, (WSAOVERLAPPED*) &mySocketOverlapped)) {
 		int err = WSAGetLastError();
 		if (err != ERROR_IO_PENDING) {

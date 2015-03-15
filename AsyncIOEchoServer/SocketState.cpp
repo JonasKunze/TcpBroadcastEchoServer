@@ -1,7 +1,7 @@
 #include "SocketState.h"
 
 SocketState::SocketState() :
-		buffSize(NUMBER_OF_BUFFS * MAX_MSG_LEN + 1) {
+buffSize(NUMBER_OF_BUFFS * MAX_MSG_LEN + 1), isAnotherServer(false){
 	socket = -1;
 
 	// start at MAX_MSG_LEN so that we have space to copy unfinished messages from the back later

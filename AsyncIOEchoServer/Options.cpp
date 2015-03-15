@@ -5,7 +5,7 @@
 using namespace std;
 
 unsigned int Options::portNumber=1234;
-std::vector<std::pair<std::string, unsigned int>> Options::servers;
+std::set<std::pair<std::string, unsigned int>> Options::servers;
 bool Options::nodelay = false;
 bool Options::noEcho = false;
 
@@ -58,16 +58,15 @@ void Options::initialize(int argc, char *argv[]) {
 				<< endl;
 			continue;
 		}
-		servers.push_back(std::make_pair(std::move(std::string(address)), port));
+		servers.insert(std::make_pair(std::move(std::string(address)), port));
 	}
 
 	if (!nodelay){
 		cout << "Use --nodelay to switch off nagle's algorithm" << endl;
 	}
 
-	if (!servers.empty()){
-		cout << "WARNING: you provided a list of slace servers without setting --noecho. This would lead messages to travel in infinite loops between the servers. Enforcing --noecho!" << endl;
-		noEcho = true;
+	if (!noEcho){
+		cout << "Use --noecho if you don't want to send back messages to the client the message comes from and only broadcast it to the other clients and servers" << endl;
 	}
 
 }
