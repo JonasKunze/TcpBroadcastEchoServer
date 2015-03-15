@@ -22,8 +22,13 @@ void runStormTest(Client& client, unsigned int msgLen, unsigned int msgNum, unsi
 	MessageHeader* data = reinterpret_cast<MessageHeader*>(new char[msgLen]);
 	data->messageLength = msgLen;
 
-	cout << "\tSending data storm with " << msgNum << " messages of " << msgLen
+	cout << "Sending data storm with " << msgNum << " messages of " << msgLen
 			<< " B each" << endl;
+
+	cout << "Please make sure that the connected server is running without --noEcho and press return to start the test!" << endl;
+	string dummy;
+	getline(std::cin, dummy);
+
 	const unsigned int lastMessageNumber = client.numberOfMessagesReceived
 			+ msgNum;
 
@@ -45,11 +50,9 @@ void runStormTest(Client& client, unsigned int msgLen, unsigned int msgNum, unsi
 			// wait for the start signal
 			{
 				std::unique_lock<std::mutex> lock(mutex);
-				if (!start){
-					condVar.wait(lock, [&]{
-						return start; 
-					});
-				}
+				condVar.wait(lock, [&]{
+					return start; 
+				});
 			}
 			for (int i = 0; i != msgNum / numberOfThreads; i++) {
 				data->messageNumber = i;
@@ -103,6 +106,10 @@ void runRttTest(Client& client, int msgLen) {
 	cout << "Measuring round trip time with messages of " << msgLen << " B each"
 			<< endl;
 
+	cout << "Please make sure that the connected server is running without --noEcho and press return to start the test!" << endl;
+	string dummy;
+	getline(std::cin, dummy);
+
 	// mute the client
 	bool oldVerbose = client.getVerbosity();
 	client.setVerbosity(false);
@@ -123,6 +130,8 @@ void runRttTest(Client& client, int msgLen) {
 		}
 		else {
 			endTime = Utils::getCurrentMillis();
+
+			// Switch back to the default message handler
 			client.setMessageHandlerFunction(client.getDefaultMessageHandler());
 		}
 	});
@@ -131,12 +140,13 @@ void runRttTest(Client& client, int msgLen) {
 	long long start = Utils::getCurrentMillis();
 	client.sendMessage(data);
 
-	// Wait until the last message has been received. Conditoin_variable seems not to work with std::function
+	// Wait until the last message has been received. condition_variable seems not to work with std::function
+	// so we have to poll for endTime
 	while (endTime == 0) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
 
-	float rtt = 1000*(endTime - start) / (float) msgNum;
+	float rtt = 1000*((endTime) - start) / (float) msgNum;
 
 	cout << endl << "Average rtt for " << msgNum << " messages was " << rtt << " microseconds"
 			<< endl;

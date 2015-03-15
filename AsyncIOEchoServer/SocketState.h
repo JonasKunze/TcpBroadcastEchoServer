@@ -24,7 +24,9 @@ struct MessageHeader {
 struct AcceptState {
 	SOCKET socket;
 	char buf[100];
-	bool isServerAccepted;
+	bool isServerAcceptor;
+
+	AcceptState(bool isServerAcceptor) :isServerAcceptor(isServerAcceptor){}
 };
 
 class SocketState
@@ -52,6 +54,8 @@ public:
 
 	unsigned int bytesMissingForCurrentMessage;
 	char unfinishedMsgBuffer[MAX_MSG_LEN];
+
+	bool isAnotherServer;
 
 	/*
 	 * Use a condition variable to wake up a writing thread waiting for a reading one to free up some memory

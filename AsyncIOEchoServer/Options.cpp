@@ -5,8 +5,9 @@
 using namespace std;
 
 unsigned int Options::portNumber=1234;
-std::vector<std::pair<std::string, unsigned int>> Options::servers;
+std::set<std::pair<std::string, unsigned int>> Options::servers;
 bool Options::nodelay = false;
+bool Options::noEcho = false;
 
 /*
  * Retrieves all options from the given arguments
@@ -34,6 +35,21 @@ void Options::initialize(int argc, char *argv[]) {
 			continue;
 		}
 
+		if (strcmp(argv[i], "--noecho") == 0) {
+			cout << "Switching off direct echo" << endl;
+			noEcho = true;
+			continue;
+		}
+
+		if (strcmp(argv[i], "--help") == 0) {
+			cout << "Usage: "<< argv[0] << "<portNumber> <parameters> slaveServer1:port1 slaveServer2:port2..." << endl;
+			cout << "Clients must connect to <portNumber>. Received messages are broadcasted to all connected clients and the first server available in the given slave server list." << endl;
+			cout << "Following parameters are allowed:" << endl;
+			cout << "\t--nodelay:\t switches off Nagle's algorithm" << endl;
+			cout << "\t--noecho:\t Messages will not be sent back to the client the message comes from" << endl;
+			exit(0);
+		}
+
 		char address[256];
 		long int port;
 
@@ -42,11 +58,15 @@ void Options::initialize(int argc, char *argv[]) {
 				<< endl;
 			continue;
 		}
-		servers.push_back(std::make_pair(std::move(std::string(address)), port));
+		servers.insert(std::make_pair(std::move(std::string(address)), port));
 	}
 
 	if (!nodelay){
 		cout << "Use --nodelay to switch off nagle's algorithm" << endl;
+	}
+
+	if (!noEcho){
+		cout << "Use --noecho if you don't want to send back messages to the client the message comes from and only broadcast it to the other clients and servers" << endl;
 	}
 
 }

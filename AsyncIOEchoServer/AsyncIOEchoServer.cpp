@@ -16,6 +16,6 @@ void main(int argc, char *argv[]) {
 
 	Options::initialize(argc, argv);
 
-	Server server(Options::portNumber, INADDR_ANY, Options::nodelay);
+	Server server(Options::portNumber, INADDR_ANY, Options::nodelay, Options::servers, Options::noEcho);
 	server.run();
 }

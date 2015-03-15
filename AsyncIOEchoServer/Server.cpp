@@ -2,6 +2,8 @@
 
 #include <iostream>
 #include <vector>
+#include <atlconv.h>
+#include <string>
 
 //using namespace std; // don't use it because <mutex> redefines bind()
 
@@ -9,17 +11,26 @@
  * portNumber: the port number the clients have to connect to
  * receiveAddres: defines the address/network device to which should be listened. Use INADDR_ANY to listen to any device
  * nodelay: if set to true the nagle's algorithm will be switched off
+ * otherServerAddressesAndPorts: Server addresses and ports to which the server should connect and send messages coming from connected clients
+ * noecho: if set to true messages will not be sent back to the source and only distributed to other connected clients/servers
  */
-Server::Server(unsigned int portNumber, unsigned long receiveAddress, bool nodelay) :
-GuidAcceptEx(WSAID_ACCEPTEX), mySocketStateClient(), mySocketStateServer(), portNumber(
-				portNumber), receiveAddress(receiveAddress), nodelay(nodelay) {
+Server::Server(unsigned int portNumber, unsigned long receiveAddress,
+		bool nodelay,
+		std::set<std::pair<std::string, unsigned int>> otherServerAddressesAndPorts,
+		bool noecho) :
+		GuidAcceptEx(WSAID_ACCEPTEX), clientAcceptor(false), serverAcceptor(
+				true), portNumber(portNumber), receiveAddress(receiveAddress), disconnectedServerAddressesAndPorts(
+				otherServerAddressesAndPorts), nodelay(nodelay), noecho(noecho) {
 	initWinsock();
 	createIoCompletionPort();
-	mySocketClient = createSocket(false);
-	mySocketServer = createSocket(true);
+	clientAcceptorSocket = createAcceptorSocket(portNumber, clientAcceptor);
+	serverAcceptorSocket = createAcceptorSocket(portNumber + 1, serverAcceptor);
 	loadAcceptEx();
-	startAccepting(true);
-	startAccepting(false);
+
+	slaveConnectionThread = std::thread(&Server::connectSlaveServer, this);
+
+	startAccepting(&clientAcceptor, clientAcceptorSocket);
+	startAccepting(&serverAcceptor, serverAcceptorSocket);
 }
 
 Server::~Server() {
@@ -33,11 +44,67 @@ void Server::initWinsock() {
 
 	if (WSAStartup(0x202, &wsaData) == SOCKET_ERROR) {
 		int err = WSAGetLastError();
-		std::cerr << "Error " << err << "in WSAStartup" << std::endl;
+		std::cerr << "Error " << err << " in WSAStartup" << std::endl;
 		exit(1);
 	}
 }
 
+/*
+ Connects to the first server in the list of servers
+ */
+void Server::connectSlaveServer() {
+	while (true) {
+		std::vector<ServerAddress> newConnections;
+		for (auto& server : disconnectedServerAddressesAndPorts) {
+			std::cout << "Trying to connect to server " << server.first.c_str()
+					<< ":" << server.second << std::endl;
+			SOCKET sock = createSocket();
+
+			SOCKADDR saAddr;
+			DWORD dwSOCKADDRLen = sizeof(saAddr);
+
+			USES_CONVERSION;
+			BOOL fConnect = WSAConnectByName(sock, A2W(server.first.c_str()),
+					A2W(std::to_string(server.second).c_str()), &dwSOCKADDRLen,
+					&saAddr, NULL, NULL, NULL, NULL);
+
+			if (!fConnect) {
+				std::cerr << "Unable to connect to Server "
+						<< server.first.c_str() << ":" << server.second
+						<< std::endl;
+				continue;
+			}
+
+			// FIXME: Redundant code with onAcceptComplete
+			SocketState_ptr connectedServer = createNewSocketState();
+			connectedServer->socket = sock;
+			connectedServer->isAnotherServer = true;
+
+			if (CreateIoCompletionPort((HANDLE) connectedServer->socket,
+					completionPort, (ULONG_PTR) connectedServer.get(), 0)
+					!= completionPort) {
+				int err = WSAGetLastError();
+				std::cerr << "Error " << err << " in CreateIoCompletionPort"
+						<< std::endl;
+				exit(1);
+			}
+
+			// starts receiving from the new connection
+			asyncRead(connectedServer);
+
+			connectedServerAddressesAndPorts[connectedServer] = server;
+			newConnections.push_back(std::move(server));
+		}
+		for (auto& server : newConnections) {
+			disconnectedServerAddressesAndPorts.erase(server);
+		}
+
+		std::unique_lock<std::mutex> lock(slaveServerDisconnectedMutex);
+		slaveServerDisconnectedCondVar.wait(lock, [this] {
+			return !disconnectedServerAddressesAndPorts.empty(); // wake up if any server is disconnected
+			});
+	}
+}
 /*
  * Initializes the instance variable completionPort with a new completion port
  */
@@ -54,19 +121,14 @@ void Server::createIoCompletionPort() {
 /*
  * Initializes the instance variable mySocket with a new TCP/IP socket
  */
-SOCKET Server::createSocket(bool createServerAcceptSocket) {
-	SOCKET newSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if (newSocket == INVALID_SOCKET) {
-		std::cerr << "Error creating listening socket!" << std::endl;
-		exit(1);
-	}
+SOCKET Server::createAcceptorSocket(unsigned int portNumber,
+		AcceptState& acceptor) {
+	SOCKET newSocket = createSocket();
 
-	AcceptState& acceptState = createServerAcceptSocket ? mySocketStateServer : mySocketStateClient;
-	acceptState.socket = -1;
-	acceptState.isServerAccepted = createServerAcceptSocket;
+	acceptor.socket = -1;
 
 	if (CreateIoCompletionPort((HANDLE) newSocket, completionPort,
-		(ULONG_PTR)& acceptState, 0) != completionPort) {
+			(ULONG_PTR) & acceptor, 0) != completionPort) {
 		int err = WSAGetLastError();
 		std::cerr << "Error " << err << " in socket" << std::endl;
 		exit(1);
@@ -78,7 +140,7 @@ SOCKET Server::createSocket(bool createServerAcceptSocket) {
 	sin.sin_addr.s_addr = htonl(receiveAddress);
 
 	// Clients have to connect to portNumber, servers to portNumber+1
-	sin.sin_port = htons(portNumber + createServerAcceptSocket);
+	sin.sin_port = htons(portNumber);
 
 	if (bind(newSocket, (SOCKADDR*) &sin, sizeof(sin)) == SOCKET_ERROR) {
 		std::cerr << "Error in bind!" << std::endl;
@@ -89,7 +151,7 @@ SOCKET Server::createSocket(bool createServerAcceptSocket) {
 		std::cerr << "Error in listen!" << std::endl;
 		exit(1);
 	}
-	std::cout << "Started listening for connections on port " << portNumber + createServerAcceptSocket
+	std::cout << "Started listening for connections on port " << portNumber
 			<< std::endl;
 	return newSocket;
 }
@@ -114,15 +176,22 @@ void Server::asyncRead(SocketState_ptr socketState) {
 /*
  * Sends all available messages in the buffer of socketState to all connected clients asynchronously
  */
-void Server::asyncBroadcast(SocketState_ptr socketState) {
+void Server::asyncBroadcast(SocketState_ptr messageSourceState) {
 
 	WSABUF* receivedMessages;
 
 	// send as many messages as available
-	while ((receivedMessages = socketState->getReadableBuff()) != nullptr) {
+	while ((receivedMessages = messageSourceState->getReadableBuff()) != nullptr) {
 
 		std::unique_lock<std::mutex> lock(clientsMutex);
 		for (auto& client : clients) {
+			// don't send back to the client the messages comes from if noecho is set
+			// Also don't send the message to other servers if it comes from another server (prevent loops)
+			if ((noecho && client == messageSourceState)
+					|| (messageSourceState->isAnotherServer
+							&& client->isAnotherServer)) {
+				continue;
+			}
 			client->pendingOperations++;
 			// Sends all buffs available to the current connected client
 			if (WSASend(client->socket, receivedMessages, 1, NULL, 0,
@@ -130,12 +199,12 @@ void Server::asyncBroadcast(SocketState_ptr socketState) {
 				client->pendingOperations--;
 			}
 		}
-		socketState->readFinished();
+		messageSourceState->readFinished();
 	}
 }
 
 /*
- * Checks the state after a read operation
+ * Checks the state after a read operation. Another read operation has already been queued by asyncBroadcast()
  */
 void Server::onSendComplete(BOOL resultOk, DWORD length,
 		SocketState_ptr socketState) {
@@ -158,33 +227,35 @@ void Server::onSendComplete(BOOL resultOk, DWORD length,
  * A new accept operation will also be initiated
  */
 void Server::onAcceptComplete(BOOL resultOk, DWORD length,
-		AcceptState* socketState) {
+		AcceptState* acceptor) {
 
 	SocketState_ptr newSocketState;
 
 	if (resultOk) {
-		std::cout << "* new connection created" << std::endl;
+		std::cout << "New "
+				<< (acceptor->isServerAcceptor ? "Server" : "Client")
+				<< " connected" << std::endl;
 
 		// updates the context
-		//setsockopt(socketState->socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
-		//	(char *)(socketState->isServerAccepted ? mySocketServer : mySocketClient), sizeof(mySocketClient));
+		setsockopt(acceptor->socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
+				(char *) &clientAcceptorSocket, sizeof(clientAcceptorSocket));
 
 		// associates new socket with completion port
-		newSocketState = createNewSocketState(socketState->isServerAccepted);
-		newSocketState->socket = socketState->socket;
+		newSocketState = createNewSocketState();
+		newSocketState->socket = acceptor->socket;
+		newSocketState->isAnotherServer = acceptor->isServerAcceptor;
 
 		// deactivate nagle's algorithm
 		if (setsockopt(newSocketState->socket, IPPROTO_TCP, TCP_NODELAY,
-			(char *)&nodelay, sizeof(nodelay))
-			== SOCKET_ERROR) {
+				(char *) &nodelay, sizeof(nodelay)) == SOCKET_ERROR) {
 			int err = WSAGetLastError();
 			std::cerr << "Error " << err << " in setsockopt TCP_NODELAY"
-				<< std::endl;
+					<< std::endl;
 			exit(1);
 		}
-		
+
 		if (CreateIoCompletionPort((HANDLE) newSocketState->socket,
-				completionPort, (ULONG_PTR) newSocketState.get() , 0)
+				completionPort, (ULONG_PTR) newSocketState.get(), 0)
 				!= completionPort) {
 			int err = WSAGetLastError();
 			std::cerr << "Error " << err << " in CreateIoCompletionPort"
@@ -195,28 +266,30 @@ void Server::onAcceptComplete(BOOL resultOk, DWORD length,
 		// starts receiving from the new connection
 		asyncRead(newSocketState);
 
-		// starts waiting for another connection request
-		startAccepting(socketState->isServerAccepted);
 	} else {
 		int err = GetLastError();
 		std::cerr << "Error (" << err << "," << length
 				<< ") in accept, cleaning up and retrying!!!" << std::endl;
-		closesocket(socketState->socket);
-		socketState->socket = 0;
-		startAccepting(socketState->isServerAccepted);
+		closesocket(acceptor->socket);
+		acceptor->socket = 0;
+	}
+	// starts waiting for another connection request
+	if (acceptor->isServerAcceptor) {
+		startAccepting(&serverAcceptor, serverAcceptorSocket);
+	} else {
+		startAccepting(&clientAcceptor, clientAcceptorSocket);
 	}
 }
 
 /*
  * Returns a socket to be used for accepting connections
  */
-SOCKET Server::createAcceptingSocket() {
+SOCKET Server::createSocket() {
 	SOCKET acceptor = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (acceptor == INVALID_SOCKET) {
 		std::cerr << "Error creating accept socket!" << std::endl;
 		exit(1);
 	}
-
 	return acceptor;
 }
 
@@ -226,12 +299,19 @@ SOCKET Server::createAcceptingSocket() {
 void Server::closeConnection(SocketState_ptr socketState) {
 	//std::unique_lock<std::mutex> lock(socketState->closeMutex);
 	if (!socketState->toBeClosed && socketState->pendingOperations <= 0) {
+		if (connectedServerAddressesAndPorts.count(socketState) > 0) {
+			// connect to the next server
+			disconnectedServerAddressesAndPorts.insert(
+					connectedServerAddressesAndPorts[socketState]);
+			connectedServerAddressesAndPorts.erase(socketState);
+			slaveServerDisconnectedCondVar.notify_all();
+		}
+
 		std::cout << "Closing connection " << socketState->socket << std::endl;
 		socketState->toBeClosed = true;
-		
+
 		std::unique_lock<std::mutex> lock(clientsMutex);
 		clients.erase(socketState);
-		servers.erase(socketState);
 		// The socket will be closed in the SocketState destructor
 	}
 }
@@ -248,8 +328,6 @@ BOOL Server::getCompletionStatus(DWORD* length, SocketState_ptr* socketState,
 	resultOk = GetQueuedCompletionStatus(completionPort, length,
 			(PULONG_PTR) socketState, (WSAOVERLAPPED**) ovl_res, INFINITE);
 
-
-
 	if (!*socketState || !*ovl_res) {
 		std::cout << "Don't know what to do, aborting!!!" << std::endl;
 		exit(1);
@@ -264,34 +342,22 @@ BOOL Server::getCompletionStatus(DWORD* length, SocketState_ptr* socketState,
 void Server::loadAcceptEx() {
 	DWORD dwBytes;
 
-	WSAIoctl(mySocketClient, SIO_GET_EXTENSION_FUNCTION_POINTER, &GuidAcceptEx,
-		sizeof(GuidAcceptEx), &pfAcceptEx, sizeof(pfAcceptEx), &dwBytes,
-		NULL,
-		NULL);
-
-	/*
-	WSAIoctl(mySocketServer, SIO_GET_EXTENSION_FUNCTION_POINTER, &GuidAcceptEx,
-		sizeof(GuidAcceptEx), &pfAcceptEx, sizeof(pfAcceptEx), &dwBytes,
-		NULL,
-		NULL);
-
-		*/
+	WSAIoctl(clientAcceptorSocket, SIO_GET_EXTENSION_FUNCTION_POINTER, &GuidAcceptEx,
+			sizeof(GuidAcceptEx), &pfAcceptEx, sizeof(pfAcceptEx), &dwBytes,
+			NULL,
+			NULL);
 }
 
 /*
  * Generate a new SocketState object
  */
-std::shared_ptr<SocketState> Server::createNewSocketState(bool createServerState) {
+std::shared_ptr<SocketState> Server::createNewSocketState() {
 	SocketState_ptr state(new SocketState());
 
 	std::unique_lock<std::mutex> lock(clientsMutex);
-	if (createServerState){
-		servers.insert(state);
-	}
-	else {
-		clients.insert(state);
-	}
-	
+
+	clients.insert(state);
+
 	return state;
 }
 
@@ -299,33 +365,30 @@ std::shared_ptr<SocketState> Server::createNewSocketState(bool createServerState
  * Initiates a new write job (broadcast) and carries on reading
  */
 void Server::onReadComplete(BOOL resultOk, DWORD length,
-	SocketState_ptr socketState) {
+		SocketState_ptr socketState) {
 
 	if (resultOk) {
 		if (length > 0) {
-			//std::cout << "Received " << length << " B" << std::endl;
-
 			memset(socketState->receiveOverlapped, 0, sizeof(WSAOVERLAPPED));
 
 			socketState->currentWriteBuff.len = length;
 			socketState->writeFinished();
 
 			// enqueue a new read read task and 
-			readJobs[socketState->socket%WRITE_THREAD_NUM].push(std::move(socketState));
+			readJobs[socketState->socket % WRITE_THREAD_NUM].push(
+					std::move(socketState));
 			asyncBroadcast(socketState);
-		}
-		else // length == 0
+		} else // length == 0
 		{
 			std::cout << "Connection closed by client" << std::endl;
 			closeConnection(socketState);
 		}
-	}
-	else // !resultOk, assumes connection was reset
+	} else // !resultOk, assumes connection was reset
 	{
 		int err = GetLastError();
 		std::cerr << "Error " << err
-			<< " in recv, assuming connection was reset by client"
-			<< std::endl;
+				<< " in recv, assuming connection was reset by client"
+				<< std::endl;
 		closeConnection(socketState);
 	}
 }
@@ -345,7 +408,7 @@ void Server::readThread(const int threadNum) {
  * The thread processing write operations (broadcasts)
  */
 void Server::writeThread(const int threadNum) {
-	std::function<void()> job;
+	std::function < void() > job;
 	while (true) {
 		writeJobs[threadNum].pop(job);
 		job();
@@ -353,18 +416,17 @@ void Server::writeThread(const int threadNum) {
 }
 
 /*
- * Spawns a read and a write thread and distributes finished IO jobs to those
+ * Spawns a pool of read and a write threads and distributes finished IO jobs to those
  */
 void Server::run() {
 	// Spawn read and write thread pools
 	std::vector<std::thread> threadPool;
-	for (int i = 0; i < READ_THREAD_NUM; i++){
-		threadPool.push_back(std::thread(&Server::readThread, this, i));
+	for (int i = 0; i < READ_THREAD_NUM; i++) {
+		threadPool.push_back(std::move(std::thread(&Server::readThread, this, i)));
 	}
-	for (int i = 0; i < WRITE_THREAD_NUM; i++){
-		threadPool.push_back(std::thread(&Server::writeThread, this, i));
+	for (int i = 0; i < WRITE_THREAD_NUM; i++) {
+		threadPool.push_back(std::move(std::thread(&Server::writeThread, this, i)));
 	}
-
 
 	DWORD length;
 	BOOL resultOk;
@@ -377,46 +439,42 @@ void Server::run() {
 
 		if (ovl_res == socketState->receiveOverlapped) {
 			//onReadComplete(resultOk, length, socketState);
-			writeJobs[socketState->socket%WRITE_THREAD_NUM].push(
-				std::function<void()>([=]() {
-				onReadComplete(resultOk, length, socketState);
-			}
-			));
-		}
-		else if (ovl_res == socketState->sendOverlapped) {
+			writeJobs[socketState->socket % WRITE_THREAD_NUM].push(
+					std::move (
+						std::function < void() > ([=]() {
+							onReadComplete(resultOk, length, socketState);
+						})
+					)
+			);
+		} else if (ovl_res == socketState->sendOverlapped) {
 			onSendComplete(resultOk, length, socketState);
-		}
-		else if (socketState->sendOverlapped == nullptr) {
-			std::cout << "New connection accepted" << std::endl;
+		} else if (socketState->sendOverlapped == nullptr) {
 			onAcceptComplete(resultOk, length,
-				reinterpret_cast<AcceptState*>(socketState.get()));
-		}
-		else {
+					reinterpret_cast<AcceptState*>(socketState.get()));
+		} else {
 			std::cerr << "Unknown state! Aborting" << std::endl;
 			exit(1);
 		}
 	}
-
 }
 
 /*
- * Starts accepting connections on mySocket
+ * Starts accepting connections on the given socket
  */
-void Server::startAccepting(bool acceptServer) {
-	SOCKET acceptor = createAcceptingSocket();
+void Server::startAccepting(AcceptState* socketState, SOCKET socket) {
+	SOCKET acceptor = createSocket();
 	DWORD expected = sizeof(struct sockaddr_in) + 16;
 
 	std::cout << "Started accepting connections..." << std::endl;
 
 	// uses mySocket's completion key and overlapped structure
-	AcceptState& socketState = acceptServer ? mySocketStateServer : mySocketStateClient;
-	socketState.socket = acceptor;
+	socketState->socket = acceptor;
 
 	memset(&mySocketOverlapped, 0, sizeof(WSAOVERLAPPED));
 
 	// starts asynchronous accept
-	if (!pfAcceptEx(acceptServer?mySocketServer:mySocketClient, acceptor, socketState.buf, 0 /* no recv */,
-		expected, expected, NULL, (WSAOVERLAPPED*) &mySocketOverlapped)) {
+	if (!pfAcceptEx(socket, acceptor, socketState->buf, 0 /* no recv */,
+			expected, expected, NULL, (WSAOVERLAPPED*) &mySocketOverlapped)) {
 		int err = WSAGetLastError();
 		if (err != ERROR_IO_PENDING) {
 			std::cerr << "Error " << err << " in AcceptEx" << std::endl;
@@ -424,3 +482,4 @@ void Server::startAccepting(bool acceptServer) {
 		}
 	}
 }
+

@@ -5,8 +5,6 @@
 #include <mutex>
 #include <condition_variable>
 
-#include "ThreadSafeProducerConsumerQueue.h"
-
 #define MAX_MSG_LEN 1500
 #define SEND_THREAD_NUM 4
 namespace std {
@@ -50,13 +48,12 @@ private:
 	const std::vector<std::pair<std::string, unsigned int>> serverAddressesAndPorts;
 
 	int sock;
-	struct sockaddr_in sin;
+	
 	std::mutex connectionMutex;
 
 	const std::thread* receiverThread;
 
 	int sendRoundRobinCounter;
-	ThreadsafeProducerConsumerQueue<std::pair<char*, unsigned int>> writeJobs[SEND_THREAD_NUM];
 
 	std::function<void(MessageHeader*)> messageHandlerFunction;
 

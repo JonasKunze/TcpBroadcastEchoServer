@@ -7,18 +7,24 @@
 #include <atomic>
 #include <mutex>
 #include <thread>
+#include <map>
 #include <iostream>
 #include <memory>
+#include <vector>
 
 #include "SocketState.h"
 #include "ThreadSafeProducerConsumerQueue.h"
 
 #define WRITE_THREAD_NUM 2
 #define READ_THREAD_NUM 2
+
+typedef std::shared_ptr<SocketState> SocketState_ptr;
+typedef std::pair<std::string, unsigned int> ServerAddress;
+
 class Server
 {
 public:
-	Server(unsigned int portNumber, unsigned long receiveAddress, bool nodelay);
+	Server(unsigned int portNumber, unsigned long receiveAddress, bool nodelay, std::set<ServerAddress> otherServerAddressesAndPorts, bool noecho);
 	virtual ~Server();
 
 	void run();
@@ -28,8 +34,8 @@ private:
 	HANDLE completionPort;
 
 	// the socket for listening to new connections
-	SOCKET mySocketClient;
-	SOCKET mySocketServer;
+	SOCKET clientAcceptorSocket;
+	SOCKET serverAcceptorSocket;
 
 	// my Socket port Number
 	const unsigned int portNumber;
@@ -40,9 +46,16 @@ private:
 	// receiver address (defining which network device should be used).
 	const unsigned long nodelay;
 
+	// If set to true messages will not be sent back to the client the message comes from. 
+	// This must be true if the server connects to other slave server to avoid infinite loops
+	const bool noecho;
+
+	std::map<SocketState_ptr, ServerAddress> connectedServerAddressesAndPorts;
+	std::set<ServerAddress> disconnectedServerAddressesAndPorts;
+
 	// Socket state used for connection establishements
-	AcceptState mySocketStateClient;
-	AcceptState mySocketStateServer;
+	AcceptState clientAcceptor;
+	AcceptState serverAcceptor;
 
 	// Overlapped object for connection purposes
 	WSAOVERLAPPED mySocketOverlapped;
@@ -52,9 +65,13 @@ private:
 	GUID GuidAcceptEx;
 
 	// all connected clients and servers
-	typedef std::shared_ptr<SocketState> SocketState_ptr;
 	std::set<SocketState_ptr> clients;
-	std::set<SocketState_ptr> servers;
+	
+	// Signaling for slave server disconnection
+	std::condition_variable slaveServerDisconnectedCondVar;
+	std::mutex slaveServerDisconnectedMutex;
+
+	std::thread slaveConnectionThread;
 
 	// mutex for clients (used for disconnections)
 	std::mutex clientsMutex;
@@ -63,14 +80,14 @@ private:
 	ThreadsafeProducerConsumerQueue<std::function<void()>> writeJobs[WRITE_THREAD_NUM];
 	int writeJobRoundRobin;
 	
-	// Qeueu for read jobs (incoming messages)
+	// Queue for read jobs (incoming messages)
 	ThreadsafeProducerConsumerQueue<SocketState_ptr> readJobs[READ_THREAD_NUM];
 
 	void initWinsock();
 
 	void createIoCompletionPort();
 	 
-	SOCKET createSocket(bool createServerAcceptSocket);
+	SOCKET createAcceptorSocket(unsigned int portNumber, AcceptState& acceptor);
 
 	void asyncRead(SocketState_ptr socketState);
 
@@ -82,23 +99,25 @@ private:
 
 	 void onAcceptComplete(BOOL resultOk, DWORD length,
 		 AcceptState* socketState);
-	 SOCKET createAcceptingSocket();
+	 SOCKET createSocket();
 	 
 	 void closeConnection(SocketState_ptr socketState);
 
 	 BOOL getCompletionStatus(DWORD* length, SocketState_ptr* socketState,
 		 WSAOVERLAPPED** ovl_res);
 	 void loadAcceptEx();
-	 SocketState_ptr createNewSocketState(bool createServerState);
+	 SocketState_ptr createNewSocketState();
 
 	 void onReadComplete(BOOL resultOk, DWORD length,
 		 SocketState_ptr socketState);
 
-	 void startAccepting(bool acceptServer);
+	 void startAccepting(AcceptState* socketState, SOCKET socket);
 
 	 void readThread(const int threadNum);
 
 	 void writeThread(const int threadNum);
+
+	 void connectSlaveServer();
 
 };
 
